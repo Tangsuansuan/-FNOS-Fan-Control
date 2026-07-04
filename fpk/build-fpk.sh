@@ -7,10 +7,10 @@ set -e
 # ============================================================
 #
 # Usage:
-#   bash build-fpk.sh
+#   bash build-fpk.sh [x86|arm]
 #
 # Output:
-#   dist/fnos-fan-control_1.0.0_x86.fpk
+#   dist/fnos-fan-control_1.1.0_x86.fpk
 # ============================================================
 
 # Determine paths
@@ -31,7 +31,12 @@ if [ -z "$APPNAME" ]; then
     APPNAME="fnos-fan-control"
 fi
 
-PLATFORM="x86"
+PLATFORM="${1:-x86}"
+case "$PLATFORM" in
+    x86|x86_64|amd64)  PLATFORM="x86" ;;
+    arm|arm64|aarch64)  PLATFORM="arm" ;;
+    *) error "Unknown platform: $PLATFORM (use x86 or arm)" ;;
+esac
 FPK_NAME="${APPNAME}_${VERSION}_${PLATFORM}.fpk"
 
 # Colors
@@ -47,7 +52,7 @@ error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
 echo -e "${CYAN}========================================${NC}"
 echo -e "${CYAN}  FPK Build Script (Non-Docker)${NC}"
-echo -e "${CYAN}  App: $APPNAME v$VERSION${NC}"
+echo -e "${CYAN}  App: $APPNAME v$VERSION ($PLATFORM)${NC}"
 echo -e "${CYAN}========================================${NC}"
 echo ""
 
