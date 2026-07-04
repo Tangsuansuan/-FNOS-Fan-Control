@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <script src="js/gauge.js"></script>
 </head>
 <body>
     <div id="app">
@@ -55,46 +56,24 @@
             <!-- Dashboard Page -->
             <div class="page active" id="page-dashboard">
                 <div class="page-header">
-                    <h1>系统仪表盘</h1>
+                    <h1>仪表盘</h1>
                     <div class="page-actions">
-                        <button class="btn btn-sm" onclick="rescanSensors()">🔄 重新扫描</button>
+                        <button class="btn btn-sm" onclick="toggleGaugePicker()">⚙️ 自定义显示</button>
+                        <button class="btn btn-sm" onclick="rescanSensors()">🔄 刷新</button>
                     </div>
                 </div>
-
-                <!-- Temperature Cards -->
-                <div class="card-grid" id="temp-cards">
-                    <!-- Dynamically populated -->
-                </div>
-
-                <!-- Main Charts -->
-                <div class="chart-row">
-                    <div class="chart-card">
-                        <div class="chart-card-header">
-                            <h3>温度趋势</h3>
-                            <span class="chart-legend" id="temp-legend"></span>
-                        </div>
-                        <div class="chart-wrapper">
-                            <canvas id="temp-chart"></canvas>
-                        </div>
+                <!-- Gauge picker panel -->
+                <div class="gauge-picker" id="gauge-picker" style="display:none">
+                    <div class="gauge-picker-header">
+                        <span>选择要显示的传感器</span>
+                        <button class="btn btn-sm" onclick="toggleGaugePicker()">✕</button>
                     </div>
-                    <div class="chart-card">
-                        <div class="chart-card-header">
-                            <h3>风扇转速</h3>
-                            <span class="chart-legend" id="rpm-legend"></span>
-                        </div>
-                        <div class="chart-wrapper">
-                            <canvas id="rpm-chart"></canvas>
-                        </div>
-                    </div>
+                    <div id="gauge-picker-list"></div>
                 </div>
-
-                <!-- Fan Status Cards -->
-                <div class="card-grid" id="fan-cards">
-                    <!-- Dynamically populated -->
-                </div>
-
-                <!-- Alerts -->
-                <div id="alerts-container"></div>
+                <!-- Car dashboard gauges -->
+                <div class="gauge-grid" id="gauge-grid"></div>
+                <!-- Fan status mini cards -->
+                <div class="fan-mini-row" id="fan-mini-row"></div>
             </div>
 
             <!-- Fan Control Page -->
@@ -170,25 +149,36 @@
                             <option value="30" selected>30天</option>
                             <option value="90">90天</option>
                         </select>
-                        <select id="history-sensor" onchange="loadHistory()">
-                            <option value="">全部传感器</option>
-                        </select>
+                        <button class="btn btn-sm" onclick="toggleHistoryFilter()">📋 筛选数据</button>
                     </div>
                 </div>
-                <div class="chart-row">
-                    <div class="chart-card">
-                        <div class="chart-card-header"><h3>温度历史</h3></div>
+                <!-- History filter panel -->
+                <div class="gauge-picker" id="history-filter" style="display:none">
+                    <div class="gauge-picker-header">
+                        <span>选择要显示的数据</span>
+                        <button class="btn btn-sm" onclick="toggleHistoryFilter()">✕</button>
+                    </div>
+                    <div id="history-filter-list"></div>
+                </div>
+                <!-- Resizable history charts -->
+                <div style="display:flex;flex-direction:column;gap:1rem">
+                    <div class="chart-card resizable" id="hist-temp-card" style="height:350px">
+                        <div class="chart-card-header">
+                            <h3>温度历史</h3>
+                            <span class="resize-hint">↕ 拖拽右下角调整大小</span>
+                        </div>
                         <div class="chart-wrapper"><canvas id="history-temp-chart"></canvas></div>
                     </div>
-                    <div class="chart-card">
-                        <div class="chart-card-header"><h3>风扇历史</h3></div>
+                    <div class="chart-card resizable" id="hist-fan-card" style="height:300px">
+                        <div class="chart-card-header">
+                            <h3>风扇历史</h3>
+                            <span class="resize-hint">↕ 拖拽右下角调整大小</span>
+                        </div>
                         <div class="chart-wrapper"><canvas id="history-fan-chart"></canvas></div>
                     </div>
-                </div>
-                <div class="chart-card" style="margin-top:1rem">
-                    <div class="chart-card-header"><h3>温度统计 (最近24小时)</h3></div>
-                    <div id="history-summary" style="padding:1rem">
-                        <span class="text-muted">加载中...</span>
+                    <div class="chart-card">
+                        <div class="chart-card-header"><h3>温度统计 (最近24小时)</h3></div>
+                        <div id="history-summary" style="padding:1rem"><span class="text-muted">加载中...</span></div>
                     </div>
                 </div>
             </div>

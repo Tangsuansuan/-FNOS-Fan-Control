@@ -123,109 +123,147 @@ async function fetchConfig() {
     }
 }
 
-// ===== Dashboard Rendering =====
+// ===== Dashboard Rendering (Car Gauges) =====
+let dashboardGauges = {};
+let gaugeVisibleSensors = {};  // name -> bool, read from localStorage
+
+function getVisibleSensors() {
+    try {
+        const saved = localStorage.getItem('fnos-gauge-sensors');
+        return saved ? JSON.parse(saved) : {};
+    } catch { return {}; }
+}
+
+function saveVisibleSensors(data) {
+    localStorage.setItem('fnos-gauge-sensors', JSON.stringify(data));
+}
+
 function renderDashboard(status) {
-    renderTempCards(status.temperatures || {});
-    renderFanCards(status.fans || []);
-    renderAlerts(status.alerts || []);
+    const temps = status.temperatures || {};
+    const fans = status.fans || [];
 
-    // Update charts with latest history periodically
-    if (Math.random() < 0.3) { // ~30% chance each update to refresh charts
-        refreshCharts();
+    // Ensure gauges are created
+    ensureGauges(Object.keys(temps));
+
+    // Update gauge values
+    const vis = getVisibleSensors();
+    for (const [name, val] of Object.entries(temps)) {
+        if (vis[name] === false) continue;
+        if (dashboardGauges[name]) {
+            dashboardGauges[name].setValue(val);
+        } else {
+            createGauge(name, val);
+        }
+    }
+
+    // Draw all gauges
+    for (const g of Object.values(dashboardGauges)) {
+        g.draw();
+    }
+    requestAnimationFrame(() => {
+        for (const g of Object.values(dashboardGauges)) g.draw();
+    });
+
+    // Fan mini cards
+    renderFanMiniCards(fans);
+}
+
+function ensureGauges(sensorNames) {
+    const container = document.getElementById('gauge-grid');
+    if (!container) return;
+    const vis = getVisibleSensors();
+
+    // Only rebuild if sensor list changed
+    const currentNames = Object.keys(dashboardGauges);
+    const newNames = sensorNames.filter(n => vis[n] !== false);
+    if (currentNames.length === newNames.length && newNames.every(n => dashboardGauges[n])) return;
+
+    container.innerHTML = '';
+    const newGauges = {};
+    for (const name of newNames) {
+        const cell = document.createElement('div');
+        cell.className = 'gauge-cell';
+        const canvas = document.createElement('canvas');
+        canvas.id = 'gauge-' + name.replace(/[^a-zA-Z0-9\u4e00-\u9fff]/g, '_');
+        cell.appendChild(canvas);
+        const label = document.createElement('div');
+        label.className = 'gauge-label';
+        label.textContent = name;
+        cell.appendChild(label);
+        container.appendChild(cell);
+
+        const temp = currentStatus?.temperatures?.[name] || 0;
+        const isDisk = name.includes('硬盘') || name.includes('NVMe') || name.includes('SATA');
+        const maxTemp = isDisk ? 80 : 100;
+        newGauges[name] = new Gauge(canvas.id, {
+            value: temp, min: 0, max: maxTemp, unit: '°C', title: name,
+            warn: isDisk ? 50 : 70, crit: isDisk ? 65 : 85,
+        });
+    }
+    dashboardGauges = newGauges;
+
+    // Also update picker
+    buildGaugePicker(sensorNames, vis);
+}
+
+function createGauge(name, value) {
+    // Called for newly appeared sensors since last ensureGauges
+    // Just rebuild
+    ensureGauges(Object.keys(currentStatus?.temperatures || {}));
+}
+
+function buildGaugePicker(sensorNames, vis) {
+    const picker = document.getElementById('gauge-picker-list');
+    if (!picker) return;
+    picker.innerHTML = sensorNames.map(name => `
+        <label class="gauge-picker-item ${vis[name] !== false ? 'checked' : ''}">
+            <input type="checkbox" ${vis[name] !== false ? 'checked' : ''}
+                onchange="toggleGaugeSensor('${name.replace(/'/g, "\\'")}', this.checked)" style="display:none">
+            ${name}
+        </label>
+    `).join('');
+}
+
+function toggleGaugeSensor(name, show) {
+    const vis = getVisibleSensors();
+    vis[name] = show;
+    saveVisibleSensors(vis);
+    // Rebuild gauges
+    dashboardGauges = {};
+    if (currentStatus) renderDashboard(currentStatus);
+}
+
+function toggleGaugePicker() {
+    const p = document.getElementById('gauge-picker');
+    if (!p) return;
+    p.style.display = p.style.display === 'none' ? 'block' : 'none';
+    if (p.style.display === 'block' && currentStatus) {
+        const vis = getVisibleSensors();
+        buildGaugePicker(Object.keys(currentStatus.temperatures || {}), vis);
     }
 }
 
-function renderTempCards(temps) {
-    const container = document.getElementById('temp-cards');
+function renderFanMiniCards(fans) {
+    const container = document.getElementById('fan-mini-row');
     if (!container) return;
-
-    const entries = Object.entries(temps);
-    container.innerHTML = entries.map(([name, temp]) => {
-        const tempClass = Charts.getTempClass(temp);
-        const color = Charts.getTempColor(temp);
-        const displayName = name.startsWith('disk:') ?
-            `💾 ${name.replace('disk:', '').replace('/dev/', '')}` :
-            `🌡️ ${name}`;
-        const source = name.startsWith('disk:') ? 'SMART' : 'hwmon';
-
-        return `
-            <div class="temp-card ${tempClass}">
-                <div class="temp-card-label">${displayName}</div>
-                <div class="temp-card-value" style="color: ${color}">
-                    ${temp.toFixed(1)}<span class="temp-card-unit">°C</span>
-                </div>
-                <div class="temp-card-source">${source}</div>
-            </div>
-        `;
-    }).join('');
-
-    if (entries.length === 0) {
-        container.innerHTML = '<div style="color: var(--text-muted); padding: 20px;">未检测到温度传感器</div>';
-    }
-}
-
-function renderFanCards(fans) {
-    const container = document.getElementById('fan-cards');
-    if (!container) return;
-
     if (!fans || fans.length === 0) {
-        container.innerHTML = '<div style="color: var(--text-muted); padding: 20px;">未检测到可控风扇</div>';
-        return;
-    }
-
-    container.innerHTML = fans.map(fan => {
-        const pwmPercent = fan.pwm_percent || 0;
-        return `
-            <div class="fan-card">
-                <div class="fan-card-header">
-                    <span class="fan-card-name">🌀 ${fan.name}</span>
-                    <span class="fan-mode-badge ${fan.mode}">${fan.mode}</span>
-                </div>
-                <div class="fan-card-stats">
-                    <div class="fan-stat">
-                        <span class="fan-stat-label">转速</span>
-                        <span class="fan-stat-value">${fan.current_rpm}<span class="fan-stat-unit"> RPM</span></span>
-                    </div>
-                    <div class="fan-stat">
-                        <span class="fan-stat-label">PWM</span>
-                        <span class="fan-stat-value">${fan.current_pwm}<span class="fan-stat-unit"> / 255</span></span>
-                    </div>
-                    <div class="fan-stat">
-                        <span class="fan-stat-label">参考温度</span>
-                        <span class="fan-stat-value" style="color:${Charts.getTempColor(fan.reference_temp)}">${fan.reference_temp.toFixed(1)}<span class="fan-stat-unit">°C</span></span>
-                    </div>
-                </div>
-                <div class="fan-pwm-bar">
-                    <div class="fan-pwm-bar-fill" style="width: ${pwmPercent}%"></div>
-                </div>
-                <div class="fan-controls">
-                    <button class="btn btn-sm ${fan.mode === 'curve' ? 'active' : ''}" onclick="setFanMode('${fan.name}', 'curve')">曲线</button>
-                    <button class="btn btn-sm ${fan.mode === 'manual' ? 'active' : ''}" onclick="setFanMode('${fan.name}', 'manual')">手动</button>
-                    <button class="btn btn-sm ${fan.mode === 'auto' ? 'active' : ''}" onclick="setFanMode('${fan.name}', 'auto')">自动</button>
-                </div>
-            </div>
-        `;
-    }).join('');
-}
-
-function renderAlerts(alerts) {
-    const container = document.getElementById('alerts-container');
-    if (!container) return;
-
-    if (!alerts || alerts.length === 0) {
         container.innerHTML = '';
         return;
     }
-
-    container.innerHTML = alerts.map(a => `
-        <div class="alert-banner">
-            <span class="alert-icon">⚠️</span>
-            <div class="alert-text">
-                <span class="alert-sensor">${a.sensor}</span>:
-                ${a.message}
-            </div>
-        </div>
-    `).join('');
+    container.innerHTML = fans.map(f => {
+        const pct = f.pwm_percent || 0;
+        const rpm = f.current_rpm || 0;
+        const rpmColor = rpm > 0 ? '#4ade80' : '#888';
+        return `
+            <div class="fan-mini-card">
+                <div>🌀</div>
+                <div>
+                    <div style="font-size:11px;color:var(--text-muted)">${f.name}</div>
+                    <div class="fan-mini-rpm" style="color:${rpmColor}">${rpm}<span style="font-size:10px;color:var(--text-muted)"> RPM</span></div>
+                    <div class="fan-mini-pct">PWM ${f.current_pwm} (${pct}%)</div>
+                </div>
+            </div>`;
+    }).join('');
 }
 
 // ===== Fan Control Page =====
@@ -533,124 +571,143 @@ async function refreshCharts() {
 // ===== History Page =====
 let historyTempChart = null;
 let historyFanChart = null;
+let historyFilterSensors = {};  // name -> bool
+
+function getHistoryFilter() {
+    try {
+        const s = localStorage.getItem('fnos-history-filter');
+        return s ? JSON.parse(s) : {};
+    } catch { return {}; }
+}
+
+function saveHistoryFilter(data) {
+    localStorage.setItem('fnos-history-filter', JSON.stringify(data));
+}
+
+function toggleHistoryFilter() {
+    const p = document.getElementById('history-filter');
+    if (!p) return;
+    p.style.display = p.style.display === 'none' ? 'block' : 'none';
+}
+
+function buildHistoryFilter(sensorNames, fanNames) {
+    const container = document.getElementById('history-filter-list');
+    if (!container) return;
+    const filt = getHistoryFilter();
+    const all = [...sensorNames.map(n => ({n, t:'temp'})), ...fanNames.map(n => ({n: n+'_pwm', t:'fan'}))];
+    container.innerHTML = all.map(({n, t}) => `
+        <label class="gauge-picker-item ${filt[n] !== false ? 'checked' : ''}">
+            <input type="checkbox" ${filt[n] !== false ? 'checked' : ''}
+                onchange="toggleHistorySensor('${n.replace(/'/g, "\\'")}', this.checked, '${t}')">
+            ${t === 'temp' ? '🌡️ ' : '🌀 '}${n}
+        </label>
+    `).join('');
+}
+
+function toggleHistorySensor(name, show) {
+    const f = getHistoryFilter();
+    f[name] = show;
+    saveHistoryFilter(f);
+}
 
 async function loadHistory() {
     const days = document.getElementById('history-days')?.value || '30';
-    const sensor = document.getElementById('history-sensor')?.value || '';
-
     try {
-        // Load temperature history
-        const tempRes = await fetch(`/api/history/temperatures?days=${days}&sensor_name=${encodeURIComponent(sensor)}&limit=2000`);
-        const tempData = await tempRes.json();
+        const [tempRes, fanRes, summaryRes] = await Promise.all([
+            fetch('/api/history/temperatures?days=' + days + '&limit=3000'),
+            fetch('/api/history/fans?days=' + days + '&limit=3000'),
+            fetch('/api/history/summary?days=1'),
+        ]);
+        const tempData = (await tempRes.json()).data || [];
+        const fanData = (await fanRes.json()).data || [];
+        const summary = (await summaryRes.json()).summary || {};
 
-        // Load fan history
-        const fanRes = await fetch(`/api/history/fans?days=${days}&limit=2000`);
-        const fanData = await fanRes.json();
+        // Update filter list
+        const sNames = [...new Set(tempData.map(d => d.sensor))];
+        const fNames = [...new Set(fanData.map(d => d.fan))];
+        buildHistoryFilter(sNames, fNames);
 
-        // Load summary
-        const summaryRes = await fetch('/api/history/summary?days=1');
-        const summaryData = await summaryRes.json();
-
-        renderHistoryCharts(tempData.data, fanData.data);
-        renderSummary(summaryData.summary);
-
-        // Populate sensor dropdown for history page
-        populateHistorySensors(tempData.data);
+        renderHistoryCharts(tempData, fanData);
+        renderSummary(summary);
     } catch (e) {
         console.error('Failed to load history:', e);
     }
 }
 
-function populateHistorySensors(data) {
-    const selector = document.getElementById('history-sensor');
-    if (!selector || selector.options.length > 2) return;
-    const sensors = new Set();
-    data.forEach(d => sensors.add(d.sensor));
-    sensors.forEach(s => {
-        const opt = document.createElement('option');
-        opt.value = s;
-        opt.textContent = s;
-        selector.appendChild(opt);
-    });
-}
-
 function renderHistoryCharts(tempData, fanData) {
-    // Temperature history chart
+    const filt = getHistoryFilter();
+
+    // Filter temp data
+    const tempFiltered = tempData.filter(d => filt[d.sensor] !== false);
+    const series = {};
+    tempFiltered.forEach(d => {
+        if (!series[d.sensor]) series[d.sensor] = [];
+        series[d.sensor].push({ x: d.timestamp * 1000, y: d.value });
+    });
+
     const tempCtx = document.getElementById('history-temp-chart')?.getContext('2d');
     if (tempCtx) {
         if (historyTempChart) historyTempChart.destroy();
-
-        // Group by sensor
-        const series = {};
-        tempData.forEach(d => {
-            if (!series[d.sensor]) series[d.sensor] = [];
-            series[d.sensor].push({ x: d.timestamp * 1000, y: d.value });
-        });
-
-        const datasets = [];
-        const colors = ['#ff6b6b', '#51cf66', '#339af0', '#fcc419', '#cc5de8', '#20c997', '#ff922b', '#748ffc'];
+        const colors = ['#ff6b6b','#51cf66','#339af0','#fcc419','#cc5de8','#20c997','#ff922b','#748ffc'];
         let ci = 0;
-        for (const [name, points] of Object.entries(series)) {
-            points.sort((a, b) => a.x - b.x);
+        const datasets = [];
+        for (const [name, pts] of Object.entries(series)) {
+            pts.sort((a, b) => a.x - b.x);
             datasets.push({
-                label: name, data: points,
+                label: name, data: pts,
                 borderColor: colors[ci % colors.length],
-                backgroundColor: 'transparent',
-                borderWidth: 1.5, pointRadius: 0, tension: 0.3,
+                pointRadius: 0, borderWidth: 2, tension: 0.3,
             });
             ci++;
         }
-
         historyTempChart = new Chart(tempCtx, {
-            type: 'line',
-            data: { datasets },
+            type: 'line', data: { datasets },
             options: {
                 responsive: true, maintainAspectRatio: false,
+                animation: { duration: 300 },
                 scales: {
                     x: { type: 'time', time: { tooltipFormat: 'MM-dd HH:mm' }, grid: { color: '#333' } },
                     y: { title: { text: '°C', display: true }, grid: { color: '#333' } },
                 },
-                plugins: { legend: { labels: { color: '#aaa', usePointStyle: true } } },
+                plugins: { legend: { labels: { color: '#aaa', usePointStyle: true, boxWidth: 8 } } },
             },
         });
     }
 
-    // Fan history chart
+    // Filter fan data
+    const fanFiltered = fanData.filter(d => filt[d.fan + '_pwm'] !== false);
+    const fSeries = {};
+    fanFiltered.forEach(d => {
+        const k = d.fan + '_pwm';
+        if (!fSeries[k]) fSeries[k] = [];
+        fSeries[k].push({ x: d.timestamp * 1000, y: d.pwm });
+    });
+
     const fanCtx = document.getElementById('history-fan-chart')?.getContext('2d');
     if (fanCtx) {
         if (historyFanChart) historyFanChart.destroy();
-
-        const series = {};
-        fanData.forEach(d => {
-            const key = d.fan + '_pwm';
-            if (!series[key]) series[key] = [];
-            series[key].push({ x: d.timestamp * 1000, y: d.pwm });
-        });
-
-        const datasets = [];
-        const colors = ['#339af0', '#51cf66', '#fcc419', '#ff6b6b'];
+        const colors = ['#339af0','#51cf66','#fcc419','#ff6b6b'];
         let ci = 0;
-        for (const [name, points] of Object.entries(series)) {
-            points.sort((a, b) => a.x - b.x);
+        const datasets = [];
+        for (const [name, pts] of Object.entries(fSeries)) {
+            pts.sort((a, b) => a.x - b.x);
             datasets.push({
-                label: name, data: points,
+                label: name, data: pts,
                 borderColor: colors[ci % colors.length],
-                backgroundColor: 'transparent',
-                borderWidth: 1.5, pointRadius: 0, tension: 0.3,
+                pointRadius: 0, borderWidth: 2, tension: 0.3,
             });
             ci++;
         }
-
         historyFanChart = new Chart(fanCtx, {
-            type: 'line',
-            data: { datasets },
+            type: 'line', data: { datasets },
             options: {
                 responsive: true, maintainAspectRatio: false,
+                animation: { duration: 300 },
                 scales: {
                     x: { type: 'time', time: { tooltipFormat: 'MM-dd HH:mm' }, grid: { color: '#333' } },
                     y: { title: { text: 'PWM (0-255)', display: true }, grid: { color: '#333' } },
                 },
-                plugins: { legend: { labels: { color: '#aaa', usePointStyle: true } } },
+                plugins: { legend: { labels: { color: '#aaa', usePointStyle: true, boxWidth: 8 } } },
             },
         });
     }
