@@ -19,7 +19,7 @@
 | | |
 |---|---|
 | 内核 | 3.x ~ 6.x 都试过 |
-| 系统 | fnOS、Debian、Ubuntu、CentOS、RHEL、Fedora、Arch、Alpine |
+| 系统 | fnOS |
 | CPU | Intel、AMD、ARM（树莓派、RK3588、全志 H6 这些） |
 | 硬盘 | SATA、SAS、NVMe、老 IDE 盘 |
 | HBA/阵列卡 | LSI MegaRAID、LSI SAS HBA（mpt3sas/mpt2sas）、HP SmartArray、3Ware、Adaptec、Marvell、Intel RST、ASMedia、VirtIO |
