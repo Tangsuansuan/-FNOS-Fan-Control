@@ -1,0 +1,11 @@
+appname="fnos-fan-control"
+version="1.1.0"
+display_name="风扇控制"
+maintainer="FNFAN"
+maintainer_url="https://github.com/fnfan/fnos-fan-control"
+distributor="FNFAN"
+desktop_uidir="ui"
+desktop_appname="fnos-fan-control.Application"
+service_port="8070"
+desc="FNOS风扇控制及温度监控程序，支持sysfs/hwmon全传感器自动扫描、SMART硬盘温度读取、PWM温度曲线控制、实时Web仪表盘"
+source=thirdparty

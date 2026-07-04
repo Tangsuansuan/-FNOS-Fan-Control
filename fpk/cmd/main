@@ -1,0 +1,189 @@
+#!/bin/bash
+#
+# FNOS Fan Controller - Process Lifecycle Manager
+# Non-Docker mode: directly manages the Python uvicorn process.
+#
+# Called by fnOS appcenter with: main {start|stop|status}
+#
+
+APP_NAME="fnos-fan-control"
+
+# Resolve APP_DIR: read from install_init's file, then try TRIM_APPDEST, then search
+APP_DIR=""
+if [ -f "/var/run/${APP_NAME}.appdir" ]; then
+    APP_DIR=$(cat "/var/run/${APP_NAME}.appdir")
+elif [ -n "$TRIM_APPDEST" ]; then
+    APP_DIR="$TRIM_APPDEST"
+else
+    # Search common paths
+    for d in "/vol2/@appcenter/${APP_NAME}" "/vol1/@appcenter/${APP_NAME}" "/trim/appdata/${APP_NAME}"; do
+        if [ -d "$d" ]; then
+            APP_DIR="$d"
+            break
+        fi
+    done
+fi
+# Venv lives outside appdata to avoid being wiped by app.tgz extraction
+VENV_DIR="/var/lib/${APP_NAME}/venv"
+VENV_PYTHON="${VENV_DIR}/bin/python"
+SYS_PYTHON="python3"
+PID_FILE="/var/run/${APP_NAME}.pid"
+LOG_FILE="/var/log/${APP_NAME}/${APP_NAME}.log"
+ERR_FILE="/var/log/${APP_NAME}/${APP_NAME}-start.log"
+
+mkdir -p /var/log/${APP_NAME} /var/run /etc/${APP_NAME}
+
+# Determine which python to use
+find_python() {
+    if [ -f "$VENV_PYTHON" ]; then
+        echo "$VENV_PYTHON"
+    elif command -v python3 &>/dev/null; then
+        echo "python3"
+    else
+        echo ""
+    fi
+}
+
+is_running() {
+    if [ -f "$PID_FILE" ]; then
+        local PID
+        PID=$(cat "$PID_FILE" 2>/dev/null)
+        if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
+case $1 in
+start)
+    echo "Starting $APP_NAME..." > "$ERR_FILE" 2>&1
+    echo "  APP_DIR=$APP_DIR" >> "$ERR_FILE" 2>&1
+    echo "  VENV_DIR=$VENV_DIR" >> "$ERR_FILE" 2>&1
+    echo "  VENV_PYTHON=$VENV_PYTHON" >> "$ERR_FILE" 2>&1
+    echo "  TRIM_APPDEST=$TRIM_APPDEST" >> "$ERR_FILE" 2>&1
+
+    if [ -z "$APP_DIR" ] || [ ! -d "$APP_DIR" ]; then
+        echo "ERROR: Cannot find app directory" >> "$ERR_FILE" 2>&1
+        echo "ERROR: Cannot find app directory"
+        exit 1
+    fi
+
+    if is_running; then
+        echo "Already running (PID: $(cat "$PID_FILE"))"
+        exit 0
+    fi
+
+    # Determine which python to use
+    PYTHON_BIN=$(find_python)
+    echo "  PYTHON_BIN=$PYTHON_BIN" >> "$ERR_FILE" 2>&1
+
+    if [ -z "$PYTHON_BIN" ]; then
+        echo "  No python found, trying to create venv..." >> "$ERR_FILE" 2>&1
+        apt-get update -qq >> "$ERR_FILE" 2>&1
+        apt-get install -y -qq python3 python3-venv python3-pip >> "$ERR_FILE" 2>&1
+        python3 -m venv "$VENV_DIR" >> "$ERR_FILE" 2>&1
+        if [ -f "$VENV_PYTHON" ]; then
+            VENVPIP="${VENV_DIR}/bin/pip"
+            # Try multiple mirrors
+            for M in "https://mirrors.aliyun.com/pypi/simple" "https://pypi.tuna.tsinghua.edu.cn/simple" "https://pypi.org/simple"; do
+                echo "  pip install via $M" >> "$ERR_FILE" 2>&1
+                $VENVPIP install -q fastapi "uvicorn[standard]" pydantic pydantic-settings -i "$M" >> "$ERR_FILE" 2>&1 && break
+            done
+            PYTHON_BIN="$VENV_PYTHON"
+        fi
+    fi
+
+    if [ -z "$PYTHON_BIN" ]; then
+        echo "ERROR: No python available" >> "$ERR_FILE" 2>&1
+        echo "ERROR: No python available"
+        exit 1
+    fi
+
+    # Verify backend directory exists
+    if [ ! -d "${APP_DIR}/backend" ]; then
+        echo "ERROR: backend dir not found: ${APP_DIR}/backend" >> "$ERR_FILE" 2>&1
+        echo "ERROR: backend directory not found"
+        exit 1
+    fi
+
+    # If using system python (no venv), try to install deps
+    if [ "$PYTHON_BIN" = "python3" ]; then
+        echo "  Using system python, checking deps..." >> "$ERR_FILE" 2>&1
+        python3 -c "import fastapi" 2>/dev/null || {
+            echo "  Installing deps with system pip..." >> "$ERR_FILE" 2>&1
+            for M in "https://mirrors.aliyun.com/pypi/simple" "https://pypi.tuna.tsinghua.edu.cn/simple" "https://pypi.org/simple"; do
+                pip3 install -q fastapi "uvicorn[standard]" pydantic pydantic-settings -i "$M" >> "$ERR_FILE" 2>&1 && break
+            done
+        }
+    fi
+
+    # Start the application
+    cd "$APP_DIR/backend" || {
+        echo "ERROR: cannot cd to $APP_DIR/backend" >> "$ERR_FILE" 2>&1
+        exit 1
+    }
+
+    export FNOS_FAN_CONFIG=/etc/fnos-fan-control/config.json
+    export FNOS_FAN_PORT=8070
+    export PYTHONUNBUFFERED=1
+
+    echo "  Starting: cd $APP_DIR/backend && $PYTHON_BIN main.py" >> "$ERR_FILE" 2>&1
+
+    nohup "$PYTHON_BIN" main.py >> "$LOG_FILE" 2>&1 &
+    PID=$!
+    echo "$PID" > "$PID_FILE"
+
+    # Wait and check if process stays alive
+    sleep 3
+    if kill -0 "$PID" 2>/dev/null; then
+        echo "Started (PID: $PID)"
+        echo "  Started successfully (PID: $PID)" >> "$ERR_FILE" 2>&1
+        exit 0
+    else
+        echo "ERROR: Process exited immediately" >> "$ERR_FILE" 2>&1
+        echo "  Last 20 lines of log:" >> "$ERR_FILE" 2>&1
+        tail -20 "$LOG_FILE" >> "$ERR_FILE" 2>&1 2>/dev/null
+        echo "ERROR: Process exited immediately, check $ERR_FILE and $LOG_FILE"
+        rm -f "$PID_FILE"
+        exit 1
+    fi
+    ;;
+stop)
+    if [ -f "$PID_FILE" ]; then
+        PID=$(cat "$PID_FILE")
+        kill "$PID" 2>/dev/null
+
+        # Wait for graceful shutdown (up to 10 seconds)
+        for i in $(seq 1 10); do
+            if ! kill -0 "$PID" 2>/dev/null; then
+                break
+            fi
+            sleep 1
+        done
+
+        # Force kill if still running
+        if kill -0 "$PID" 2>/dev/null; then
+            kill -9 "$PID" 2>/dev/null
+        fi
+        rm -f "$PID_FILE"
+        echo "Stopped"
+    else
+        echo "Not running"
+    fi
+    exit 0
+    ;;
+status)
+    if is_running; then
+        echo "Running (PID: $(cat "$PID_FILE"))"
+        exit 0
+    else
+        echo "Stopped"
+        exit 3
+    fi
+    ;;
+*)
+    echo "Usage: $0 {start|stop|status}"
+    exit 1
+    ;;
+esac

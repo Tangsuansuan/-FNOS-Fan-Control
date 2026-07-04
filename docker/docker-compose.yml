@@ -1,0 +1,46 @@
+version: "3.8"
+
+services:
+  fnos-fan-control:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: fnos-fan-control:latest
+    container_name: fnos-fan-control
+    restart: unless-stopped
+
+    # Mount sysfs for hardware sensor access
+    volumes:
+      # sysfs mounted to /host/sys (read-only for temperatures, rw for PWM via separate mount)
+      - /sys:/host/sys:rw
+      # /dev for smartctl disk access
+      - /dev:/dev:ro
+      # udev for device enumeration
+      - /run/udev:/run/udev:ro
+      # Persistent config
+      - fnos-fan-config:/etc/fnos-fan-control
+
+    ports:
+      - "8070:8070"
+
+    environment:
+      - FNOS_FAN_PORT=8070
+      - PYTHONUNBUFFERED=1
+      - SYSFS_PATH=/host/sys
+      - DEV_PATH=/dev
+
+    # privileged mode ensures full access to sysfs pwm writes and /dev devices
+    privileged: true
+
+    network_mode: bridge
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8070/api/status')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  fnos-fan-config:
+    driver: local

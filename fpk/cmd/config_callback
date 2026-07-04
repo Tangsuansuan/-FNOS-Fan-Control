@@ -1,0 +1,4 @@
+#!/bin/bash
+
+### Lifecycle hook - exits with 0 (success)
+exit 0

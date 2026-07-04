@@ -1,0 +1,156 @@
+#!/bin/bash
+#
+# install_init - prepare venv + dependencies
+# Logs to /var/log/fnos-fan-control/install.log
+#
+
+APP_NAME="fnos-fan-control"
+APP_DIR="${TRIM_APPDEST:-/vol2/@appcenter/${APP_NAME}}"
+VENV_DIR="/var/lib/${APP_NAME}/venv"    # outside appdata to survive app.tgz extraction
+LOG_DIR="/var/log/${APP_NAME}"
+LOG_FILE="${LOG_DIR}/install.log"
+
+mkdir -p "$LOG_DIR"
+
+log() {
+    echo "[$(date '+%H:%M:%S')] $1" >> "$LOG_FILE"
+    echo "$1"
+}
+
+log "=========================================="
+log "  install_init started"
+log "  APP_DIR=$APP_DIR"
+log "=========================================="
+
+# ======== pip mirror fallback list ========
+# Try mirrors from fastest to slowest for fnOS (aliyun typically works best)
+PIP_MIRRORS=(
+    "https://mirrors.aliyun.com/pypi/simple"
+    "https://pypi.tuna.tsinghua.edu.cn/simple"
+    "https://pypi.mirrors.ustc.edu.cn/simple"
+    "https://pypi.org/simple"
+)
+
+try_pip_install() {
+    local packages="$1"
+    for mirror in "${PIP_MIRRORS[@]}"; do
+        log "    Trying mirror: $mirror"
+        if $VENV_PIP install $packages -i "$mirror" --trusted-host "$(echo "$mirror" | sed 's|https://||;s|/.*||')" >>"$LOG_FILE" 2>&1; then
+            log "    Success with: $mirror"
+            return 0
+        fi
+        log "    Failed with: $mirror"
+    done
+    return 1
+}
+
+# 1. Ensure python3 exists
+log "[1/5] Checking python3..."
+if ! command -v python3 >/dev/null 2>&1; then
+    log "  python3 not found, installing..."
+    apt-get update -qq >>"$LOG_FILE" 2>&1
+    apt-get install -y -qq python3 python3-pip python3-venv >>"$LOG_FILE" 2>&1
+fi
+log "  $(python3 --version 2>&1)"
+
+# 2. Ensure venv module
+log "[2/5] Checking python3-venv..."
+if ! python3 -c "import venv" 2>/dev/null; then
+    log "  venv module missing, installing..."
+    apt-get install -y -qq python3-venv >>"$LOG_FILE" 2>&1
+fi
+
+# 3. Create venv
+log "[3/5] Creating venv..."
+rm -rf "$VENV_DIR"
+python3 -m venv "$VENV_DIR" >>"$LOG_FILE" 2>&1
+VENV_PIP="${VENV_DIR}/bin/pip"
+VENV_PY="${VENV_DIR}/bin/python"
+
+if [ ! -f "$VENV_PY" ]; then
+    log "  ERROR: venv creation failed, skipping pip install"
+    log "  Will use system python3 at start time"
+    exit 0
+fi
+log "  venv OK: $($VENV_PY --version 2>&1)"
+
+# Bootstrap pip if missing
+if [ ! -f "$VENV_PIP" ]; then
+    log "  Bootstrapping pip..."
+    "$VENV_PY" -m ensurepip --upgrade >>"$LOG_FILE" 2>&1 || true
+fi
+
+# 4. Install dependencies with mirror fallback
+log "[4/5] Installing dependencies..."
+
+# Find requirements.txt (try multiple paths)
+REQ_FILES=(
+    "${APP_DIR}/backend/requirements.txt"
+    "${APP_DIR}/requirements.txt"
+)
+REQ_FILE=""
+for f in "${REQ_FILES[@]}"; do
+    if [ -f "$f" ]; then
+        REQ_FILE="$f"
+        log "  Found requirements at: $f"
+        break
+    fi
+done
+
+# Also search for it
+if [ -z "$REQ_FILE" ]; then
+    log "  Searching for requirements.txt..."
+    FOUND=$(find "$APP_DIR" -name "requirements.txt" -type f 2>/dev/null | head -1)
+    if [ -n "$FOUND" ]; then
+        REQ_FILE="$FOUND"
+        log "  Found via search: $REQ_FILE"
+    fi
+fi
+
+if [ -n "$REQ_FILE" ] && [ -f "$REQ_FILE" ]; then
+    PKGS="-r $REQ_FILE"
+else
+    log "  requirements.txt not found, using core packages"
+    PKGS="fastapi==0.115.6 uvicorn[standard]==0.34.0 pydantic==2.10.3 pydantic-settings==2.7.0"
+fi
+
+# Try each mirror until one works (skip pip upgrade, install directly)
+if [ -f "$VENV_PIP" ]; then
+    for mirror in "${PIP_MIRRORS[@]}"; do
+        log "  Trying pip mirror: $mirror"
+        if $VENV_PIP install $PKGS -i "$mirror" --trusted-host "$(echo "$mirror" | sed 's|https://||;s|/.*||')" >>"$LOG_FILE" 2>&1; then
+            log "  SUCCESS with mirror: $mirror"
+            break
+        fi
+        log "  Failed with: $mirror"
+    done
+fi
+
+# 5. Verify
+log "[5/5] Verifying..."
+$VENV_PY -c "
+for m in ['fastapi','uvicorn','pydantic']:
+    try:
+        __import__(m)
+        print(f'  {m}: OK')
+    except:
+        print(f'  {m}: MISSING')
+        exit(1)
+" >>"$LOG_FILE" 2>&1
+
+if [ $? -eq 0 ]; then
+    log "  All modules OK"
+else
+    log "  WARNING: some modules missing, check log"
+fi
+
+log ""
+log "=========================================="
+log "  install_init done"
+log "=========================================="
+
+# Write app directory for main script to find
+echo "$APP_DIR" > /var/run/fnos-fan-control.appdir
+chmod 644 /var/run/fnos-fan-control.appdir
+
+exit 0
