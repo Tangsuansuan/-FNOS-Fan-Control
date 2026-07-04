@@ -1,0 +1,24 @@
+#!/bin/bash
+#
+# uninstall_init - Runs before app uninstall.
+# Stops the service and cleans up runtime files.
+#
+
+APP_NAME="fnos-fan-control"
+APP_DIR="${TRIM_APPDEST:-/trim/appdata/${APP_NAME}}"
+PID_FILE="/var/run/${APP_NAME}.pid"
+
+# Stop the service if running
+if [ -f "$PID_FILE" ]; then
+    PID=$(cat "$PID_FILE")
+    kill "$PID" 2>/dev/null
+    sleep 2
+    kill -9 "$PID" 2>/dev/null
+    rm -f "$PID_FILE"
+fi
+
+# Remove venv (now in /var/lib/)
+rm -rf "/var/lib/${APP_NAME}/venv"
+rm -f "/var/run/${APP_NAME}.appdir"
+
+exit 0

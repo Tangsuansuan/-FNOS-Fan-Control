@@ -1,0 +1,13 @@
+{
+    "update_interval": 2,
+    "data_history_length": 300,
+    "enable_smartctl": true,
+    "smartctl_path": "/usr/sbin/smartctl",
+    "web_port": 8070,
+    "fans": [],
+    "auto_detect": true,
+    "log_level": "INFO",
+    "enable_alerts": false,
+    "alert_temp_cpu": 85.0,
+    "alert_temp_disk": 60.0
+}
