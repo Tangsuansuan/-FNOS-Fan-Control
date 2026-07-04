@@ -13,6 +13,8 @@ from collections import deque
 
 from config import AppConfig, FanConfig, FanCurvePoint
 from sensors import SensorScanner
+from history import init_db, write_temperature, write_fan_state, cleanup_old_records
+from notifier import AlertNotifier
 
 logger = logging.getLogger("fnos-fan.controller")
 
@@ -90,6 +92,13 @@ class FanController:
         self.sys_temp_history: deque = deque(maxlen=config.data_history_length)
         self.last_update_time: float = 0.0
 
+        # Persistent history
+        init_db()
+        self._cleanup_task: Optional[asyncio.Task] = None
+
+        # Alert notifier
+        self._notifier = AlertNotifier(config.model_dump())
+
         self._init_fan_states()
 
     def _init_fan_states(self):
@@ -116,6 +125,7 @@ class FanController:
         self.config = config
         self.sys_temp_history = deque(maxlen=config.data_history_length)
         self._init_fan_states()
+        self._notifier.reload_config(config.model_dump())
 
     async def start(self):
         """Start the control loop."""
@@ -123,6 +133,8 @@ class FanController:
             return
         self._running = True
         self._task = asyncio.create_task(self._control_loop())
+        # Run initial cleanup and schedule periodic cleanup
+        self._cleanup_task = asyncio.create_task(self._periodic_cleanup())
         logger.info("Fan control loop started")
 
     async def stop(self):
@@ -135,6 +147,13 @@ class FanController:
             except asyncio.CancelledError:
                 pass
             self._task = None
+        if self._cleanup_task:
+            self._cleanup_task.cancel()
+            try:
+                await self._cleanup_task
+            except asyncio.CancelledError:
+                pass
+            self._cleanup_task = None
         # Restore fans to automatic mode
         for state in self.fan_states:
             self.scanner.set_fan_mode(
@@ -143,6 +162,16 @@ class FanController:
                 2,  # 2 = automatic
             )
         logger.info("Fan control loop stopped, fans restored to auto mode")
+
+    async def _periodic_cleanup(self):
+        """Periodically clean up old history records."""
+        await asyncio.sleep(10)  # Wait for system to settle
+        while self._running:
+            try:
+                cleanup_old_records(self.config.history_retention_days)
+            except Exception as e:
+                logger.error(f"History cleanup error: {e}")
+            await asyncio.sleep(3600)  # Run every hour
 
     def _get_reference_temp(self, state: FanRuntimeState, all_temps: dict[str, float]) -> float:
         """
@@ -227,6 +256,14 @@ class FanController:
         timestamp = time.time()
         self.last_update_time = timestamp
 
+        # Persist temperatures to SQLite
+        for name, val in all_temps.items():
+            if val > 0:
+                try:
+                    write_temperature(name, val, timestamp)
+                except Exception:
+                    pass
+
         # Process each controlled fan
         for state in self.fan_states:
             if not state.control_enabled:
@@ -273,13 +310,20 @@ class FanController:
             state.pwm_history.append((timestamp, target_pwm))
 
             # Read current RPM
+            current_rpm = 0
             for dev in self.scanner.hwmon_devices:
                 for sensor in dev.fan_rpms:
                     if (sensor.hwmon_path == state.config.hwmon_path and
                         sensor.channel == state.config.rpm_channel):
-                        rpm = self.scanner.read_fan_rpm(sensor)
-                        state.rpm_history.append((timestamp, rpm))
+                        current_rpm = self.scanner.read_fan_rpm(sensor)
+                        state.rpm_history.append((timestamp, current_rpm))
                         break
+
+            # Persist fan state to SQLite
+            try:
+                write_fan_state(state.config.name, target_pwm, current_rpm, timestamp)
+            except Exception:
+                pass
 
             logger.debug(
                 f"Fan '{state.config.name}': temp={ref_temp:.1f}C, "
@@ -295,12 +339,28 @@ class FanController:
             "pwms": dict(all_pwms),
         }))
 
+        # Check alerts and send emails
+        self._check_and_send_alerts()
+
         # Call update callback if set
         if self._update_callback:
             try:
                 await self._update_callback(self.get_status())
             except Exception as e:
                 logger.error(f"Update callback error: {e}")
+
+    def _check_and_send_alerts(self):
+        """Check temperature thresholds and send email alerts."""
+        if not self.config.enable_alerts:
+            return
+
+        all_temps = self.scanner.get_all_temperatures()
+        for name, temp in all_temps.items():
+            if temp <= 0:
+                continue
+            threshold = self.config.alert_temp_disk if "硬盘" in name else self.config.alert_temp_cpu
+            if temp > threshold:
+                self._notifier.send_alert(name, temp, threshold)
 
     def get_status(self) -> dict:
         """Get current status of all fans and sensors."""

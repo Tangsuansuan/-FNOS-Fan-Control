@@ -61,6 +61,20 @@ class AppConfig(BaseModel):
     alert_temp_cpu: float = Field(default=85.0, description="CPU alert temperature")
     alert_temp_disk: float = Field(default=60.0, description="Disk alert temperature")
 
+    # History retention
+    history_retention_days: int = Field(default=30, ge=3, le=90, description="Days to keep temperature/fan history (3/7/30/90)")
+
+    # Email alert (SMTP) settings
+    alert_enabled: bool = Field(default=False, description="Send email alerts")
+    alert_cooldown_minutes: int = Field(default=30, ge=5, le=1440, description="Minimum interval between alert emails")
+    smtp_host: str = Field(default="", description="SMTP server hostname")
+    smtp_port: int = Field(default=465, description="SMTP server port")
+    smtp_user: str = Field(default="", description="SMTP username")
+    smtp_password: str = Field(default="", description="SMTP password")
+    smtp_from: str = Field(default="", description="From address (defaults to smtp_user)")
+    smtp_to: str = Field(default="", description="Alert recipient email")
+    smtp_use_tls: bool = Field(default=True, description="Use SSL/TLS connection")
+
 
 DEFAULT_CONFIG_PATH = "/etc/fnos-fan-control/config.json"
 LOCAL_CONFIG_PATH = "config/config.json"

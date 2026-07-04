@@ -36,6 +36,7 @@ function initNavigation() {
             if (pageName === 'fans') fetchFans();
             if (pageName === 'curve') initCurveEditor();
             if (pageName === 'settings') fetchConfig();
+            if (pageName === 'history') loadHistory();
         });
     });
 }
@@ -105,6 +106,18 @@ async function fetchConfig() {
         document.getElementById('setting-alert-disk').value = cfg.alert_temp_disk || 60;
         document.getElementById('setting-enable-smartctl').checked = cfg.enable_smartctl !== false;
         document.getElementById('setting-smartctl-path').value = cfg.smartctl_path || '/usr/sbin/smartctl';
+        // History retention
+        document.getElementById('setting-history-retention').value = cfg.history_retention_days || 30;
+        // SMTP
+        document.getElementById('setting-alert-enabled').checked = cfg.alert_enabled || false;
+        document.getElementById('setting-smtp-host').value = cfg.smtp_host || '';
+        document.getElementById('setting-smtp-port').value = cfg.smtp_port || 465;
+        document.getElementById('setting-smtp-tls').checked = cfg.smtp_use_tls !== false;
+        document.getElementById('setting-smtp-user').value = cfg.smtp_user || '';
+        document.getElementById('setting-smtp-password').value = cfg.smtp_password || '';
+        document.getElementById('setting-smtp-from').value = cfg.smtp_from || '';
+        document.getElementById('setting-smtp-to').value = cfg.smtp_to || '';
+        document.getElementById('setting-alert-cooldown').value = cfg.alert_cooldown_minutes || 30;
     } catch (e) {
         showToast(`获取配置失败: ${e.message}`, 'error');
     }
@@ -470,6 +483,16 @@ async function saveSettings() {
         alert_temp_cpu: parseFloat(document.getElementById('setting-alert-cpu').value),
         alert_temp_disk: parseFloat(document.getElementById('setting-alert-disk').value),
         enable_smartctl: document.getElementById('setting-enable-smartctl').checked,
+        history_retention_days: parseInt(document.getElementById('setting-history-retention').value),
+        alert_enabled: document.getElementById('setting-alert-enabled').checked,
+        alert_cooldown_minutes: parseInt(document.getElementById('setting-alert-cooldown').value),
+        smtp_host: document.getElementById('setting-smtp-host').value,
+        smtp_port: parseInt(document.getElementById('setting-smtp-port').value),
+        smtp_user: document.getElementById('setting-smtp-user').value,
+        smtp_password: document.getElementById('setting-smtp-password').value,
+        smtp_from: document.getElementById('setting-smtp-from').value,
+        smtp_to: document.getElementById('setting-smtp-to').value,
+        smtp_use_tls: document.getElementById('setting-smtp-tls').checked,
     };
 
     try {
@@ -504,6 +527,166 @@ async function refreshCharts() {
         Charts.updateRpmChart(history);
     } catch (e) {
         // Silent
+    }
+}
+
+// ===== History Page =====
+let historyTempChart = null;
+let historyFanChart = null;
+
+async function loadHistory() {
+    const days = document.getElementById('history-days')?.value || '30';
+    const sensor = document.getElementById('history-sensor')?.value || '';
+
+    try {
+        // Load temperature history
+        const tempRes = await fetch(`/api/history/temperatures?days=${days}&sensor_name=${encodeURIComponent(sensor)}&limit=2000`);
+        const tempData = await tempRes.json();
+
+        // Load fan history
+        const fanRes = await fetch(`/api/history/fans?days=${days}&limit=2000`);
+        const fanData = await fanRes.json();
+
+        // Load summary
+        const summaryRes = await fetch('/api/history/summary?days=1');
+        const summaryData = await summaryRes.json();
+
+        renderHistoryCharts(tempData.data, fanData.data);
+        renderSummary(summaryData.summary);
+
+        // Populate sensor dropdown for history page
+        populateHistorySensors(tempData.data);
+    } catch (e) {
+        console.error('Failed to load history:', e);
+    }
+}
+
+function populateHistorySensors(data) {
+    const selector = document.getElementById('history-sensor');
+    if (!selector || selector.options.length > 2) return;
+    const sensors = new Set();
+    data.forEach(d => sensors.add(d.sensor));
+    sensors.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s;
+        opt.textContent = s;
+        selector.appendChild(opt);
+    });
+}
+
+function renderHistoryCharts(tempData, fanData) {
+    // Temperature history chart
+    const tempCtx = document.getElementById('history-temp-chart')?.getContext('2d');
+    if (tempCtx) {
+        if (historyTempChart) historyTempChart.destroy();
+
+        // Group by sensor
+        const series = {};
+        tempData.forEach(d => {
+            if (!series[d.sensor]) series[d.sensor] = [];
+            series[d.sensor].push({ x: d.timestamp * 1000, y: d.value });
+        });
+
+        const datasets = [];
+        const colors = ['#ff6b6b', '#51cf66', '#339af0', '#fcc419', '#cc5de8', '#20c997', '#ff922b', '#748ffc'];
+        let ci = 0;
+        for (const [name, points] of Object.entries(series)) {
+            points.sort((a, b) => a.x - b.x);
+            datasets.push({
+                label: name, data: points,
+                borderColor: colors[ci % colors.length],
+                backgroundColor: 'transparent',
+                borderWidth: 1.5, pointRadius: 0, tension: 0.3,
+            });
+            ci++;
+        }
+
+        historyTempChart = new Chart(tempCtx, {
+            type: 'line',
+            data: { datasets },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                scales: {
+                    x: { type: 'time', time: { tooltipFormat: 'MM-dd HH:mm' }, grid: { color: '#333' } },
+                    y: { title: { text: '°C', display: true }, grid: { color: '#333' } },
+                },
+                plugins: { legend: { labels: { color: '#aaa', usePointStyle: true } } },
+            },
+        });
+    }
+
+    // Fan history chart
+    const fanCtx = document.getElementById('history-fan-chart')?.getContext('2d');
+    if (fanCtx) {
+        if (historyFanChart) historyFanChart.destroy();
+
+        const series = {};
+        fanData.forEach(d => {
+            const key = d.fan + '_pwm';
+            if (!series[key]) series[key] = [];
+            series[key].push({ x: d.timestamp * 1000, y: d.pwm });
+        });
+
+        const datasets = [];
+        const colors = ['#339af0', '#51cf66', '#fcc419', '#ff6b6b'];
+        let ci = 0;
+        for (const [name, points] of Object.entries(series)) {
+            points.sort((a, b) => a.x - b.x);
+            datasets.push({
+                label: name, data: points,
+                borderColor: colors[ci % colors.length],
+                backgroundColor: 'transparent',
+                borderWidth: 1.5, pointRadius: 0, tension: 0.3,
+            });
+            ci++;
+        }
+
+        historyFanChart = new Chart(fanCtx, {
+            type: 'line',
+            data: { datasets },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                scales: {
+                    x: { type: 'time', time: { tooltipFormat: 'MM-dd HH:mm' }, grid: { color: '#333' } },
+                    y: { title: { text: 'PWM (0-255)', display: true }, grid: { color: '#333' } },
+                },
+                plugins: { legend: { labels: { color: '#aaa', usePointStyle: true } } },
+            },
+        });
+    }
+}
+
+function renderSummary(summary) {
+    const container = document.getElementById('history-summary');
+    if (!container) return;
+    if (!summary || Object.keys(summary).length === 0) {
+        container.innerHTML = '<span class="text-muted">暂无历史数据</span>';
+        return;
+    }
+    let html = '<div style="display:flex;flex-wrap:wrap;gap:16px">';
+    for (const [name, stats] of Object.entries(summary)) {
+        html += `
+            <div style="background:var(--bg-input);padding:12px 16px;border-radius:8px;min-width:180px">
+                <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">${name}</div>
+                <div style="display:flex;gap:12px;font-size:13px">
+                    <span>低 ${stats.min}°C</span>
+                    <span>均 ${stats.avg}°C</span>
+                    <span>高 ${stats.max}°C</span>
+                </div>
+            </div>`;
+    }
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+// ===== Alert Test =====
+async function testAlertEmail() {
+    try {
+        const res = await fetch('/api/alert/test', { method: 'POST' });
+        const data = await res.json();
+        showToast(data.message, data.success ? 'success' : 'error');
+    } catch (e) {
+        showToast(`测试失败: ${e.message}`, 'error');
     }
 }
 

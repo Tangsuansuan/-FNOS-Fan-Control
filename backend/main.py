@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from config import AppConfig, FanConfig, FanCurvePoint, load_config, save_config
 from sensors import SensorScanner
 from controller import FanController
+from history import read_temperature_history, read_fan_history, get_temp_summary
 
 # Setup logging
 logging.basicConfig(
@@ -191,6 +192,16 @@ class ConfigUpdate(BaseModel):
     alert_temp_cpu: Optional[float] = None
     alert_temp_disk: Optional[float] = None
     enable_smartctl: Optional[bool] = None
+    history_retention_days: Optional[int] = None
+    alert_enabled: Optional[bool] = None
+    alert_cooldown_minutes: Optional[int] = None
+    smtp_host: Optional[str] = None
+    smtp_port: Optional[int] = None
+    smtp_user: Optional[str] = None
+    smtp_password: Optional[str] = None
+    smtp_from: Optional[str] = None
+    smtp_to: Optional[str] = None
+    smtp_use_tls: Optional[bool] = None
 
 
 class RescanRequest(BaseModel):
@@ -313,6 +324,36 @@ async def update_config(req: ConfigUpdate):
     if req.enable_smartctl is not None:
         app_config.enable_smartctl = req.enable_smartctl
         changed = True
+    if req.history_retention_days is not None:
+        app_config.history_retention_days = max(3, min(90, req.history_retention_days))
+        changed = True
+    if req.alert_enabled is not None:
+        app_config.alert_enabled = req.alert_enabled
+        changed = True
+    if req.alert_cooldown_minutes is not None:
+        app_config.alert_cooldown_minutes = req.alert_cooldown_minutes
+        changed = True
+    if req.smtp_host is not None:
+        app_config.smtp_host = req.smtp_host
+        changed = True
+    if req.smtp_port is not None:
+        app_config.smtp_port = req.smtp_port
+        changed = True
+    if req.smtp_user is not None:
+        app_config.smtp_user = req.smtp_user
+        changed = True
+    if req.smtp_password is not None:
+        app_config.smtp_password = req.smtp_password
+        changed = True
+    if req.smtp_from is not None:
+        app_config.smtp_from = req.smtp_from
+        changed = True
+    if req.smtp_to is not None:
+        app_config.smtp_to = req.smtp_to
+        changed = True
+    if req.smtp_use_tls is not None:
+        app_config.smtp_use_tls = req.smtp_use_tls
+        changed = True
 
     if changed:
         if controller:
@@ -333,6 +374,41 @@ async def save_config_endpoint():
         raise HTTPException(503, "Not initialized")
     path = save_config(app_config)
     return {"message": "Configuration saved", "path": path}
+
+
+@app.get("/api/history/summary")
+async def get_history_summary(days: int = 1):
+    """Get min/max/avg temp summary for the last N days."""
+    return {"days": days, "summary": get_temp_summary(days)}
+
+
+@app.get("/api/history/temperatures")
+async def get_temp_history(sensor_name: Optional[str] = None, days: int = 7, limit: int = 2000):
+    """Get temperature history from SQLite."""
+    return {
+        "days": days,
+        "sensor": sensor_name,
+        "data": read_temperature_history(sensor_name, days, limit),
+    }
+
+
+@app.get("/api/history/fans")
+async def get_fan_history(fan_name: Optional[str] = None, days: int = 7, limit: int = 2000):
+    """Get fan PWM/RPM history from SQLite."""
+    return {
+        "days": days,
+        "fan": fan_name,
+        "data": read_fan_history(fan_name, days, limit),
+    }
+
+
+@app.post("/api/alert/test")
+async def test_alert_email():
+    """Send a test email to verify SMTP config."""
+    if controller is None:
+        raise HTTPException(503, "Controller not initialized")
+    ok, msg = controller._notifier.send_test_email()
+    return {"success": ok, "message": msg}
 
 
 # --- WebSocket ---

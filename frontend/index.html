@@ -6,6 +6,7 @@
     <title>FNOS 风扇控制 & 温度监控</title>
     <link rel="stylesheet" href="css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 </head>
 <body>
     <div id="app">
@@ -31,6 +32,10 @@
                 <li class="nav-item" data-page="curve">
                     <span class="nav-icon">📈</span>
                     <span class="nav-label">温度曲线</span>
+                </li>
+                <li class="nav-item" data-page="history">
+                    <span class="nav-icon">📋</span>
+                    <span class="nav-label">历史记录</span>
                 </li>
                 <li class="nav-item" data-page="settings">
                     <span class="nav-icon">⚙️</span>
@@ -154,7 +159,39 @@
                 </div>
             </div>
 
-            <!-- Settings Page -->
+            <!-- History Page -->
+            <div class="page" id="page-history">
+                <div class="page-header">
+                    <h1>历史记录</h1>
+                    <div class="page-actions">
+                        <select id="history-days" onchange="loadHistory()">
+                            <option value="3">3天</option>
+                            <option value="7">7天</option>
+                            <option value="30" selected>30天</option>
+                            <option value="90">90天</option>
+                        </select>
+                        <select id="history-sensor" onchange="loadHistory()">
+                            <option value="">全部传感器</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="chart-row">
+                    <div class="chart-card">
+                        <div class="chart-card-header"><h3>温度历史</h3></div>
+                        <div class="chart-wrapper"><canvas id="history-temp-chart"></canvas></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="chart-card-header"><h3>风扇历史</h3></div>
+                        <div class="chart-wrapper"><canvas id="history-fan-chart"></canvas></div>
+                    </div>
+                </div>
+                <div class="chart-card" style="margin-top:1rem">
+                    <div class="chart-card-header"><h3>温度统计 (最近24小时)</h3></div>
+                    <div id="history-summary" style="padding:1rem">
+                        <span class="text-muted">加载中...</span>
+                    </div>
+                </div>
+            </div>
             <div class="page" id="page-settings">
                 <div class="page-header">
                     <h1>系统设置</h1>
@@ -200,6 +237,62 @@
                             <label>smartctl 路径</label>
                             <input type="text" id="setting-smartctl-path" value="/usr/sbin/smartctl">
                         </div>
+                    </div>
+                    <div class="settings-section">
+                        <h3>历史记录</h3>
+                        <div class="form-group">
+                            <label>数据保留天数</label>
+                            <select id="setting-history-retention">
+                                <option value="3">3天</option>
+                                <option value="7">7天</option>
+                                <option value="30" selected>30天</option>
+                                <option value="90">90天</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="settings-section">
+                        <h3>邮件告警 (SMTP)</h3>
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="setting-alert-enabled">
+                                启用邮件告警
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label>SMTP 服务器</label>
+                            <input type="text" id="setting-smtp-host" placeholder="smtp.qq.com">
+                        </div>
+                        <div class="form-group">
+                            <label>端口</label>
+                            <input type="number" id="setting-smtp-port" value="465">
+                        </div>
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="setting-smtp-tls" checked>
+                                使用 SSL/TLS
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label>用户名</label>
+                            <input type="text" id="setting-smtp-user" placeholder="your@email.com">
+                        </div>
+                        <div class="form-group">
+                            <label>密码 (授权码)</label>
+                            <input type="password" id="setting-smtp-password" placeholder="授权码">
+                        </div>
+                        <div class="form-group">
+                            <label>发件人 (可选)</label>
+                            <input type="text" id="setting-smtp-from" placeholder="your@email.com">
+                        </div>
+                        <div class="form-group">
+                            <label>收件人</label>
+                            <input type="email" id="setting-smtp-to" placeholder="alert@email.com">
+                        </div>
+                        <div class="form-group">
+                            <label>告警冷却 (分钟)</label>
+                            <input type="number" id="setting-alert-cooldown" min="5" max="1440" value="30">
+                        </div>
+                        <button class="btn" onclick="testAlertEmail()">✉️ 发送测试邮件</button>
                     </div>
                     <div class="settings-actions">
                         <button class="btn btn-primary" onclick="saveSettings()">💾 保存设置</button>
