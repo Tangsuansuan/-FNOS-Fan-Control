@@ -1,12 +1,12 @@
 #!/bin/bash
 #
-# install_init - prepare venv + dependencies
-# Logs to /var/log/fnos-fan-control/install.log
+# install_init - 准备运行环境
+# 优先使用系统包（apt/应用商店），pip 作为回退
 #
 
 APP_NAME="fnos-fan-control"
 APP_DIR="${TRIM_APPDEST:-/vol2/@appcenter/${APP_NAME}}"
-VENV_DIR="/var/lib/${APP_NAME}/venv"    # outside appdata to survive app.tgz extraction
+VENV_DIR="/var/lib/${APP_NAME}/venv"
 LOG_DIR="/var/log/${APP_NAME}"
 LOG_FILE="${LOG_DIR}/install.log"
 
@@ -22,8 +22,7 @@ log "  install_init started"
 log "  APP_DIR=$APP_DIR"
 log "=========================================="
 
-# ======== pip mirror fallback list ========
-# Try mirrors from fastest to slowest for fnOS (aliyun typically works best)
+# ======== pip 镜像回退列表 ========
 PIP_MIRRORS=(
     "https://mirrors.aliyun.com/pypi/simple"
     "https://pypi.tuna.tsinghua.edu.cn/simple"
@@ -31,103 +30,120 @@ PIP_MIRRORS=(
     "https://pypi.org/simple"
 )
 
-try_pip_install() {
-    local packages="$1"
+pip_install_with_fallback() {
+    local pkgs="$1"
     for mirror in "${PIP_MIRRORS[@]}"; do
-        log "    Trying mirror: $mirror"
-        if $VENV_PIP install $packages -i "$mirror" --trusted-host "$(echo "$mirror" | sed 's|https://||;s|/.*||')" >>"$LOG_FILE" 2>&1; then
-            log "    Success with: $mirror"
+        log "    pip mirror: $mirror"
+        if "$VENV_PIP" install $pkgs -i "$mirror" --trusted-host "$(echo "$mirror" | sed 's|https://||;s|/.*||')" >>"$LOG_FILE" 2>&1; then
+            log "    success"
             return 0
         fi
-        log "    Failed with: $mirror"
     done
     return 1
 }
 
-# 1. Ensure python3 exists
-log "[1/5] Checking python3..."
+# ======== 1. 系统层依赖（优先 apt/应用商店）========
+log "[1/5] 系统层依赖..."
+apt-get update -qq >>"$LOG_FILE" 2>&1 || true
+
+# python3 — 系统通常已有
 if ! command -v python3 >/dev/null 2>&1; then
-    log "  python3 not found, installing..."
-    apt-get update -qq >>"$LOG_FILE" 2>&1
+    log "  python3 未找到，尝试安装..."
     apt-get install -y -qq python3 python3-pip python3-venv >>"$LOG_FILE" 2>&1
 fi
-log "  $(python3 --version 2>&1)"
+log "  python3: $(python3 --version 2>&1 || echo 'MISSING')"
 
-# 2. Ensure venv module
-log "[2/5] Checking python3-venv..."
+# venv 模块
 if ! python3 -c "import venv" 2>/dev/null; then
-    log "  venv module missing, installing..."
+    log "  venv 模块缺失，安装 python3-venv..."
     apt-get install -y -qq python3-venv >>"$LOG_FILE" 2>&1
 fi
 
-# 3. Create venv
-log "[3/5] Creating venv..."
+# smartmontools (smartctl) — 优先用系统包
+if ! command -v smartctl >/dev/null 2>&1; then
+    log "  smartctl 未找到，安装 smartmontools..."
+    apt-get install -y -qq smartmontools >>"$LOG_FILE" 2>&1
+    if command -v smartctl >/dev/null 2>&1; then
+        log "  smartctl: $(smartctl --version 2>&1 | head -1)"
+    else
+        log "  smartctl 安装失败（不影响运行，磁盘温度走 sysfs）"
+    fi
+else
+    log "  smartctl: $(smartctl --version 2>&1 | head -1)"
+fi
+
+# ======== 2. 尝试 apt 安装 Python 包（应用商店/系统源）========
+log "[2/5] Python 依赖（优先 apt）..."
+
+# Debian/Ubuntu 可能有的包，先试 apt，没有就 pip
+APT_PY_PACKAGES=(
+    "python3-fastapi"
+    "python3-uvicorn"
+    "python3-pydantic"
+)
+APT_INSTALLED=false
+for pkg in "${APT_PY_PACKAGES[@]}"; do
+    if apt-cache show "$pkg" >>"$LOG_FILE" 2>&1; then
+        log "  尝试 apt install $pkg..."
+        apt-get install -y -qq "$pkg" >>"$LOG_FILE" 2>&1 && APT_INSTALLED=true
+    fi
+done
+
+if $APT_INSTALLED; then
+    # 验证 apt 装的包是否可用
+    if python3 -c "import fastapi, uvicorn, pydantic" 2>/dev/null; then
+        log "  系统 Python 包可用，跳过 venv 创建"
+        # 系统 python3 直接跑，不建 venv
+        echo "$APP_DIR" > /var/run/fnos-fan-control.appdir
+        chmod 644 /var/run/fnos-fan-control.appdir
+        log ""
+        log "=========================================="
+        log "  install_init done (apt packages)"
+        log "=========================================="
+        exit 0
+    else
+        log "  apt 包安装但导入失败，回退到 pip/venv"
+    fi
+fi
+
+# ======== 3. 创建 venv ========
+log "[3/5] 创建 venv..."
 rm -rf "$VENV_DIR"
 python3 -m venv "$VENV_DIR" >>"$LOG_FILE" 2>&1
 VENV_PIP="${VENV_DIR}/bin/pip"
 VENV_PY="${VENV_DIR}/bin/python"
 
 if [ ! -f "$VENV_PY" ]; then
-    log "  ERROR: venv creation failed, skipping pip install"
-    log "  Will use system python3 at start time"
+    log "  ERROR: venv 创建失败"
+    log "  将在启动时由 main 脚本重试"
+    echo "$APP_DIR" > /var/run/fnos-fan-control.appdir
+    chmod 644 /var/run/fnos-fan-control.appdir
     exit 0
 fi
-log "  venv OK: $($VENV_PY --version 2>&1)"
+log "  venv: $($VENV_PY --version 2>&1)"
 
-# Bootstrap pip if missing
-if [ ! -f "$VENV_PIP" ]; then
-    log "  Bootstrapping pip..."
-    "$VENV_PY" -m ensurepip --upgrade >>"$LOG_FILE" 2>&1 || true
-fi
+# ======== 4. pip 安装依赖 ========
+log "[4/5] pip 安装依赖..."
 
-# 4. Install dependencies with mirror fallback
-log "[4/5] Installing dependencies..."
-
-# Find requirements.txt (try multiple paths)
-REQ_FILES=(
-    "${APP_DIR}/backend/requirements.txt"
-    "${APP_DIR}/requirements.txt"
-)
+# 查找 requirements.txt
 REQ_FILE=""
-for f in "${REQ_FILES[@]}"; do
-    if [ -f "$f" ]; then
-        REQ_FILE="$f"
-        log "  Found requirements at: $f"
-        break
-    fi
+for f in "${APP_DIR}/backend/requirements.txt" "${APP_DIR}/requirements.txt"; do
+    [ -f "$f" ] && { REQ_FILE="$f"; break; }
 done
-
-# Also search for it
-if [ -z "$REQ_FILE" ]; then
-    log "  Searching for requirements.txt..."
-    FOUND=$(find "$APP_DIR" -name "requirements.txt" -type f 2>/dev/null | head -1)
-    if [ -n "$FOUND" ]; then
-        REQ_FILE="$FOUND"
-        log "  Found via search: $REQ_FILE"
-    fi
-fi
+[ -z "$REQ_FILE" ] && REQ_FILE=$(find "$APP_DIR" -name "requirements.txt" -type f 2>/dev/null | head -1)
 
 if [ -n "$REQ_FILE" ] && [ -f "$REQ_FILE" ]; then
+    log "  使用: $REQ_FILE"
     PKGS="-r $REQ_FILE"
 else
-    log "  requirements.txt not found, using core packages"
-    PKGS="fastapi==0.115.6 uvicorn[standard]==0.34.0 pydantic==2.10.3 pydantic-settings==2.7.0"
+    log "  requirements.txt 未找到，用默认包"
+    PKGS="fastapi>=0.104.0 uvicorn[standard]>=0.24.0 pydantic>=2.5.0 pydantic-settings>=2.1.0"
 fi
 
-# Try each mirror until one works (skip pip upgrade, install directly)
-if [ -f "$VENV_PIP" ]; then
-    for mirror in "${PIP_MIRRORS[@]}"; do
-        log "  Trying pip mirror: $mirror"
-        if $VENV_PIP install $PKGS -i "$mirror" --trusted-host "$(echo "$mirror" | sed 's|https://||;s|/.*||')" >>"$LOG_FILE" 2>&1; then
-            log "  SUCCESS with mirror: $mirror"
-            break
-        fi
-        log "  Failed with: $mirror"
-    done
-fi
+pip_install_with_fallback "$PKGS"
 
-# 5. Verify
-log "[5/5] Verifying..."
+# ======== 5. 验证 ========
+log "[5/5] 验证..."
 $VENV_PY -c "
 for m in ['fastapi','uvicorn','pydantic']:
     try:
@@ -139,9 +155,9 @@ for m in ['fastapi','uvicorn','pydantic']:
 " >>"$LOG_FILE" 2>&1
 
 if [ $? -eq 0 ]; then
-    log "  All modules OK"
+    log "  所有模块 OK"
 else
-    log "  WARNING: some modules missing, check log"
+    log "  WARNING: 部分模块缺失，请检查日志"
 fi
 
 log ""
@@ -149,8 +165,6 @@ log "=========================================="
 log "  install_init done"
 log "=========================================="
 
-# Write app directory for main script to find
 echo "$APP_DIR" > /var/run/fnos-fan-control.appdir
 chmod 644 /var/run/fnos-fan-control.appdir
-
 exit 0
