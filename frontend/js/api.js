@@ -1,5 +1,5 @@
 /**
- * API Client - communicates with the FastAPI backend
+ * API 客户端 — 与 FastAPI 后端通信
  */
 
 const API = {

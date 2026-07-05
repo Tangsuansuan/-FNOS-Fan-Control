@@ -1,6 +1,6 @@
 """
-Persistent history storage using SQLite.
-Stores temperature and fan RPM readings with configurable retention.
+基于 SQLite 的持久化历史记录存储。
+存储温度和风扇转速数据，支持可配置的保留时长。
 """
 
 import logging

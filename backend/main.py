@@ -1,6 +1,6 @@
 """
-FNOS Fan Controller - FastAPI Application
-Provides REST API and WebSocket for fan control and temperature monitoring.
+FNOS 风扇控制器 - FastAPI 应用。
+提供 REST API 和 WebSocket，实现风扇控制和温度监控。
 """
 
 import asyncio
@@ -24,7 +24,7 @@ from sensors import SensorScanner
 from controller import FanController
 from history import read_temperature_history, read_fan_history, get_temp_summary
 
-# Setup logging
+# 日志配置
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -34,7 +34,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("fnos-fan")
 
-# Global instances
+# 全局实例
 app_config: AppConfig = None
 scanner: SensorScanner = None
 controller: FanController = None
@@ -42,7 +42,7 @@ controller: FanController = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application startup and shutdown lifecycle."""
+    """应用启动和关闭生命周期。"""
     global app_config, scanner, controller
 
     logger.info("Starting FNOS Fan Controller...")
@@ -58,12 +58,12 @@ async def lifespan(app: FastAPI):
         enable_smartctl=app_config.enable_smartctl,
     )
 
-    # Scan hardware
+    # 扫描硬件
     logger.info("Scanning hardware sensors...")
     scanner.scan_hwmon()
     await scanner.scan_disks()
 
-    # Auto-configure fans if none configured and auto_detect is enabled
+    # 如果未配置风扇且启用了自动检测，则自动配置
     if app_config.auto_detect and not app_config.fans:
         logger.info("Auto-detecting fans...")
         _auto_configure_fans(app_config, scanner)
@@ -86,7 +86,7 @@ def _auto_configure_fans(config: AppConfig, scn: SensorScanner):
     """Auto-detect and configure fans based on found PWM controls."""
     for dev in scn.hwmon_devices:
         for pwm in dev.fan_pwms:
-            # Skip PWMs without corresponding RPM sensors (likely not fans)
+            # 跳过无对应转速传感器的 PWM（可能不是风扇）
             has_rpm = any(
                 rpm.hwmon_path == dev.hwmon_path and rpm.channel == pwm.channel
                 for rpm in dev.fan_rpms
@@ -110,7 +110,7 @@ def _auto_configure_fans(config: AppConfig, scn: SensorScanner):
         logger.warning("No controllable fans detected!")
 
 
-# Create FastAPI app
+# 创建 FastAPI 应用
 app = FastAPI(
     title="FNOS Fan Controller",
     description="Fan control and temperature monitoring for FNOS (飞牛OS)",
@@ -131,7 +131,7 @@ app.add_middleware(
 # --- WebSocket connection manager ---
 
 class ConnectionManager:
-    """Manages WebSocket connections for real-time updates."""
+    """管理实时更新的 WebSocket 连接。"""
 
     def __init__(self):
         self.active: list[WebSocket] = []
@@ -147,7 +147,7 @@ class ConnectionManager:
         logger.info(f"WebSocket disconnected, total: {len(self.active)}")
 
     async def broadcast(self, message: dict):
-        """Broadcast a message to all connected clients."""
+        """向所有连接的客户端广播消息。"""
         if not self.active:
             return
         data = json.dumps(message, ensure_ascii=False)
@@ -165,14 +165,14 @@ ws_manager = ConnectionManager()
 
 
 async def ws_update_callback(status: dict):
-    """Callback for controller to push updates via WebSocket."""
+    """控制器通过 WebSocket 推送更新的回调。"""
     await ws_manager.broadcast({"type": "status", "data": status})
 
 
-# Set the callback after controller is initialized (done in lifespan)
+# 在 lifespan 中初始化控制器后设置回调
 
 
-# --- Pydantic models for API ---
+# --- API 的 Pydantic 模型 ---
 
 class FanModeRequest(BaseModel):
     mode: str  # "curve" | "manual" | "auto"
@@ -208,11 +208,11 @@ class RescanRequest(BaseModel):
     rescan_disks: bool = True
 
 
-# --- API Routes ---
+# --- API 路由 ---
 
 @app.get("/api/status")
 async def get_status():
-    """Get current system status: all temperatures, fan speeds, PWM values."""
+    """获取当前系统状态：所有温度、风扇转速、PWM 值。"""
     if controller is None:
         raise HTTPException(503, "Controller not initialized")
     return controller.get_status()
@@ -220,7 +220,7 @@ async def get_status():
 
 @app.get("/api/sensors")
 async def get_sensors():
-    """Get all detected sensors."""
+    """获取所有检测到的传感器。"""
     if scanner is None:
         raise HTTPException(503, "Scanner not initialized")
     return scanner.to_dict()
@@ -228,7 +228,7 @@ async def get_sensors():
 
 @app.post("/api/sensors/rescan")
 async def rescan_sensors(req: RescanRequest):
-    """Rescan for hardware sensors."""
+    """重新扫描硬件传感器。"""
     global scanner
     if scanner is None:
         raise HTTPException(503, "Scanner not initialized")
@@ -237,7 +237,7 @@ async def rescan_sensors(req: RescanRequest):
     if req.rescan_disks:
         await scanner.scan_disks()
 
-    # Reinitialize controller if needed
+    # 如有需要重新初始化控制器
     if controller:
         controller._init_fan_states()
 
@@ -249,7 +249,7 @@ async def rescan_sensors(req: RescanRequest):
 
 @app.get("/api/fans")
 async def get_fans():
-    """Get all fan configurations and current status."""
+    """获取所有风扇配置和当前状态。"""
     if controller is None:
         raise HTTPException(503, "Controller not initialized")
     return {"fans": controller.get_status()["fans"]}
@@ -257,7 +257,7 @@ async def get_fans():
 
 @app.put("/api/fans/{fan_name}/mode")
 async def set_fan_mode(fan_name: str, req: FanModeRequest):
-    """Set fan control mode."""
+    """设置风扇控制模式。"""
     if controller is None:
         raise HTTPException(503, "Controller not initialized")
     if not controller.set_fan_mode(fan_name, req.mode):
@@ -267,7 +267,7 @@ async def set_fan_mode(fan_name: str, req: FanModeRequest):
 
 @app.put("/api/fans/{fan_name}/pwm")
 async def set_fan_pwm(fan_name: str, req: FanPwmRequest):
-    """Set manual PWM for a fan (also sets mode to manual)."""
+    """设置风扇手动 PWM（同时将模式设为手动）。"""
     if controller is None:
         raise HTTPException(503, "Controller not initialized")
     if not controller.set_fan_manual_pwm(fan_name, req.pwm):
@@ -277,7 +277,7 @@ async def set_fan_pwm(fan_name: str, req: FanPwmRequest):
 
 @app.put("/api/fans/{fan_name}/curve")
 async def update_fan_curve(fan_name: str, req: FanCurveUpdate):
-    """Update a fan's temperature curve."""
+    """更新风扇温度曲线。"""
     if controller is None:
         raise HTTPException(503, "Controller not initialized")
     if not controller.update_fan_curve(fan_name, req.curve):
@@ -287,7 +287,7 @@ async def update_fan_curve(fan_name: str, req: FanCurveUpdate):
 
 @app.get("/api/history")
 async def get_history(fan_name: Optional[str] = None, limit: int = 100):
-    """Get historical data for charts."""
+    """获取图表的历史数据。"""
     if controller is None:
         raise HTTPException(503, "Controller not initialized")
     return controller.get_history(fan_name=fan_name, limit=limit)
@@ -295,7 +295,7 @@ async def get_history(fan_name: Optional[str] = None, limit: int = 100):
 
 @app.get("/api/config")
 async def get_config():
-    """Get current configuration."""
+    """获取当前配置。"""
     if app_config is None:
         raise HTTPException(503, "Not initialized")
     return app_config.model_dump()
@@ -303,7 +303,7 @@ async def get_config():
 
 @app.put("/api/config")
 async def update_config(req: ConfigUpdate):
-    """Update application configuration."""
+    """更新应用配置。"""
     global app_config
     if app_config is None:
         raise HTTPException(503, "Not initialized")
@@ -369,7 +369,7 @@ async def update_config(req: ConfigUpdate):
 
 @app.post("/api/config/save")
 async def save_config_endpoint():
-    """Save current configuration to disk."""
+    """将当前配置保存到磁盘。"""
     if app_config is None:
         raise HTTPException(503, "Not initialized")
     path = save_config(app_config)
@@ -378,13 +378,13 @@ async def save_config_endpoint():
 
 @app.get("/api/history/summary")
 async def get_history_summary(days: int = 1):
-    """Get min/max/avg temp summary for the last N days."""
+    """获取最近 N 天的温度 min/max/avg 汇总。"""
     return {"days": days, "summary": get_temp_summary(days)}
 
 
 @app.get("/api/history/temperatures")
 async def get_temp_history(sensor_name: Optional[str] = None, days: int = 7, limit: int = 2000):
-    """Get temperature history from SQLite."""
+    """从 SQLite 获取温度历史记录。"""
     return {
         "days": days,
         "sensor": sensor_name,
@@ -394,7 +394,7 @@ async def get_temp_history(sensor_name: Optional[str] = None, days: int = 7, lim
 
 @app.get("/api/history/fans")
 async def get_fan_history(fan_name: Optional[str] = None, days: int = 7, limit: int = 2000):
-    """Get fan PWM/RPM history from SQLite."""
+    """从 SQLite 获取风扇 PWM/RPM 历史记录。"""
     return {
         "days": days,
         "fan": fan_name,
@@ -404,7 +404,7 @@ async def get_fan_history(fan_name: Optional[str] = None, days: int = 7, limit: 
 
 @app.post("/api/alert/test")
 async def test_alert_email():
-    """Send a test email to verify SMTP config."""
+    """发送测试邮件以验证 SMTP 配置。"""
     if controller is None:
         raise HTTPException(503, "Controller not initialized")
     ok, msg = controller._notifier.send_test_email()
@@ -415,7 +415,7 @@ async def test_alert_email():
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
-    """WebSocket endpoint for real-time status updates."""
+    """WebSocket 端点，用于实时状态更新。"""
     await ws_manager.connect(ws)
     # Set the update callback
     if controller:
@@ -423,7 +423,7 @@ async def websocket_endpoint(ws: WebSocket):
 
     try:
         while True:
-            # Keep connection alive, listen for client messages
+            # 保持连接，监听客户端消息
             data = await ws.receive_text()
             msg = json.loads(data) if data else {}
             if msg.get("type") == "ping":
@@ -435,8 +435,8 @@ async def websocket_endpoint(ws: WebSocket):
         ws_manager.disconnect(ws)
 
 
-# --- Static files (serve frontend) ---
-# Use resolve() to get absolute path regardless of how script is invoked
+# --- 静态文件（前端）---
+# 使用 resolve() 获取绝对路径，不受脚本调用方式影响
 frontend_path = Path(__file__).resolve().parent.parent / "frontend"
 if frontend_path.exists():
     app.mount("/", StaticFiles(directory=str(frontend_path), html=True), name="frontend")

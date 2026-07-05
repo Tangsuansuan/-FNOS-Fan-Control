@@ -1,6 +1,6 @@
 """
-Email notification module for temperature alerts.
-User configures their own SMTP server.
+温度告警邮件通知模块。
+用户自行配置 SMTP 服务器。
 """
 
 import logging
@@ -13,7 +13,7 @@ logger = logging.getLogger("fnos-fan.notifier")
 
 
 class AlertNotifier:
-    """Sends email alerts when temperature exceeds thresholds."""
+    """温度超阈值时发送邮件告警。"""
 
     def __init__(self, config: dict):
         self.smtp_host = config.get("smtp_host", "")
@@ -26,7 +26,7 @@ class AlertNotifier:
         self.cooldown_seconds = config.get("alert_cooldown_minutes", 30) * 60
         self.enabled = config.get("alert_enabled", False)
 
-        # Cooldown tracking: sensor_name -> last alert timestamp
+        # 冷却跟踪：传感器名 → 上次告警时间戳
         self._last_alert: dict[str, float] = {}
 
     @property
@@ -45,14 +45,14 @@ class AlertNotifier:
         self.enabled = config.get("alert_enabled", False)
 
     def send_alert(self, sensor_name: str, temperature: float, threshold: float) -> bool:
-        """Send a temperature alert email. Returns True if sent, False if skipped or failed."""
+        """发送温度告警邮件。发送成功返回 True，跳过或失败返回 False。"""
         if not self.enabled:
             return False
         if not self.configured:
             logger.warning("Alert enabled but SMTP not configured")
             return False
 
-        # Cooldown check
+        # 冷却检查
         now = time.time()
         last = self._last_alert.get(sensor_name, 0)
         if now - last < self.cooldown_seconds:
@@ -95,7 +95,7 @@ class AlertNotifier:
             return False
 
     def send_test_email(self) -> tuple[bool, str]:
-        """Send a test email to verify SMTP configuration."""
+        """发送测试邮件以验证 SMTP 配置。"""
         if not self.configured:
             return False, "SMTP服务器未配置"
 

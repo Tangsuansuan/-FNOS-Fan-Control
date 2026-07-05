@@ -1,12 +1,12 @@
 /**
- * FNOS Fan Controller - Main Application Logic
+ * FNOS 风扇控制器 - 主应用逻辑
  */
 
 const ws = new WSManager();
 let currentStatus = null;
 let updateTimer = null;
 
-// ===== Initialization =====
+// ===== 初始化 =====
 document.addEventListener('DOMContentLoaded', () => {
     initNavigation();
     Charts.initCharts();
@@ -15,11 +15,11 @@ document.addEventListener('DOMContentLoaded', () => {
     ws.onMessage(handleWsMessage);
     fetchInitialData();
 
-    // Poll for status updates as backup to WebSocket
+    // 轮询状态更新作为 WebSocket 的备份
     updateTimer = setInterval(fetchStatus, 5000);
 });
 
-// ===== Navigation =====
+// ===== 导航 =====
 function initNavigation() {
     document.querySelectorAll('.nav-item').forEach(item => {
         item.addEventListener('click', () => {
@@ -30,7 +30,7 @@ function initNavigation() {
             const page = document.getElementById(pageId);
             if (page) page.classList.add('active');
 
-            // Lazy load page data
+            // 页面按需加载数据
             const pageName = item.dataset.page;
             if (pageName === 'sensors') fetchSensors();
             if (pageName === 'fans') fetchFans();
@@ -41,17 +41,17 @@ function initNavigation() {
     });
 }
 
-// ===== WebSocket Handler =====
+// ===== WebSocket 处理 =====
 function handleWsMessage(msg) {
     if (msg.type === 'status' && msg.data) {
         currentStatus = msg.data;
         renderDashboard(msg.data);
     } else if (msg.type === 'pong') {
-        // Keepalive response
+        // 心跳响应
     }
 }
 
-// ===== Data Fetching =====
+// ===== 数据获取 =====
 async function fetchInitialData() {
     try {
         const status = await API.getStatus();
@@ -73,7 +73,7 @@ async function fetchStatus() {
         currentStatus = status;
         renderDashboard(status);
     } catch (e) {
-        // Silent fail for polling
+        // 轮询静默失败
         console.debug('Status fetch error:', e.message);
     }
 }
@@ -106,7 +106,7 @@ async function fetchConfig() {
         document.getElementById('setting-alert-disk').value = cfg.alert_temp_disk || 60;
         document.getElementById('setting-enable-smartctl').checked = cfg.enable_smartctl !== false;
         document.getElementById('setting-smartctl-path').value = cfg.smartctl_path || '/usr/sbin/smartctl';
-        // History retention
+        // 历史保留
         document.getElementById('setting-history-retention').value = cfg.history_retention_days || 30;
         // SMTP
         document.getElementById('setting-alert-enabled').checked = cfg.alert_enabled || false;
@@ -123,7 +123,7 @@ async function fetchConfig() {
     }
 }
 
-// ===== Dashboard Rendering (Car Gauges) =====
+// ===== 仪表盘渲染（汽车仪表） =====
 let dashboardGauges = {};
 let gaugeVisibleSensors = {};  // name -> bool, read from localStorage
 
@@ -142,10 +142,10 @@ function renderDashboard(status) {
     const temps = status.temperatures || {};
     const fans = status.fans || [];
 
-    // Ensure gauges are created
+    // 确保仪表盘已创建
     ensureGauges(Object.keys(temps));
 
-    // Update gauge values
+    // 更新仪表盘数值
     const vis = getVisibleSensors();
     for (const [name, val] of Object.entries(temps)) {
         if (vis[name] === false) continue;
@@ -156,7 +156,7 @@ function renderDashboard(status) {
         }
     }
 
-    // Draw all gauges
+    // 绘制所有仪表盘
     for (const g of Object.values(dashboardGauges)) {
         g.draw();
     }
@@ -173,7 +173,7 @@ function ensureGauges(sensorNames) {
     if (!container) return;
     const vis = getVisibleSensors();
 
-    // Only rebuild if sensor list changed
+    // 仅在传感器列表变化时重建
     const currentNames = Object.keys(dashboardGauges);
     const newNames = sensorNames.filter(n => vis[n] !== false);
     if (currentNames.length === newNames.length && newNames.every(n => dashboardGauges[n])) return;
@@ -207,8 +207,8 @@ function ensureGauges(sensorNames) {
 }
 
 function createGauge(name, value) {
-    // Called for newly appeared sensors since last ensureGauges
-    // Just rebuild
+    // 自上次 ensureGauges 后新出现的传感器调用
+    // 直接重建
     ensureGauges(Object.keys(currentStatus?.temperatures || {}));
 }
 
@@ -266,7 +266,7 @@ function renderFanMiniCards(fans) {
     }).join('');
 }
 
-// ===== Fan Control Page =====
+// ===== 风扇控制页 =====
 function renderFanControls(fans) {
     const container = document.getElementById('fan-control-list');
     if (!container) return;
@@ -324,7 +324,7 @@ function renderFanControls(fans) {
     `).join('');
 }
 
-// ===== Actions =====
+// ===== 操作 =====
 async function setFanMode(fanName, mode) {
     try {
         await API.setFanMode(fanName, mode);
@@ -339,7 +339,7 @@ async function setFanMode(fanName, mode) {
 async function setFanPwm(fanName, pwm) {
     try {
         await API.setFanPwm(fanName, parseInt(pwm));
-        // No toast for rapid slider changes
+        // 快速滑动不弹提示
     } catch (e) {
         showToast(`设置PWM失败: ${e.message}`, 'error');
     }
@@ -357,7 +357,7 @@ async function rescanSensors(rescanDisks = false) {
     }
 }
 
-// ===== Sensors Page =====
+// ===== 传感器页 =====
 function renderSensors(data) {
     const container = document.getElementById('sensors-list');
     if (!container) return;
@@ -450,7 +450,7 @@ function renderSensors(data) {
     container.innerHTML = html || '<div style="color: var(--text-muted); padding: 40px; text-align: center;">未检测到传感器</div>';
 }
 
-// ===== Curve Editor =====
+// ===== 曲线编辑器 =====
 async function initCurveEditor() {
     if (!currentStatus || !currentStatus.fans) {
         const status = await API.getStatus();
@@ -513,7 +513,7 @@ function resetCurve() {
     ]);
 }
 
-// ===== Settings =====
+// ===== 设置 =====
 async function saveSettings() {
     const config = {
         update_interval: parseInt(document.getElementById('setting-update-interval').value),
@@ -557,18 +557,18 @@ async function exportConfig() {
     }
 }
 
-// ===== Charts Refresh =====
+// ===== 图表刷新 =====
 async function refreshCharts() {
     try {
         const history = await API.getHistory(null, 60);
         Charts.updateTempChart(history);
         Charts.updateRpmChart(history);
     } catch (e) {
-        // Silent
+        // 静默
     }
 }
 
-// ===== History Page =====
+// ===== 历史记录页 =====
 let historyTempChart = null;
 let historyFanChart = null;
 let historyFilterSensors = {};  // name -> bool
@@ -736,7 +736,7 @@ function renderSummary(summary) {
     container.innerHTML = html;
 }
 
-// ===== Alert Test =====
+// ===== 告警测试 =====
 async function testAlertEmail() {
     try {
         const res = await fetch('/api/alert/test', { method: 'POST' });
@@ -747,7 +747,7 @@ async function testAlertEmail() {
     }
 }
 
-// ===== Toast =====
+// ===== 提示框 =====
 function showToast(message, type = 'info') {
     const container = document.getElementById('toast-container');
     const toast = document.createElement('div');

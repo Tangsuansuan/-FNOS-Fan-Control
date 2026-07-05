@@ -1,13 +1,13 @@
 """
-Hardware sensor scanning module — Universal compatibility version.
-Supports:
-  - Linux kernels 3.x ~ 6.x
+硬件传感器扫描模块 — 通用兼容版本。
+支持：
+  - Linux 内核 3.x ~ 6.x
   - Debian / Ubuntu / CentOS / RHEL / Fedora / Arch / Alpine / fnOS
-  - SATA / SAS / NVMe / IDE / USB / eMMC drives
+  - SATA / SAS / NVMe / IDE / USB / eMMC 硬盘
   - AHCI / LSI MegaRAID / LSI SAS HBA (mpt3sas/mpt2sas) / 3Ware /
     HP SmartArray / Adaptec / Marvell / ASMedia / Intel RST / VirtIO
-  - Auto-detection of smartctl path and HBA driver type
-  - Sysfs temperature (hwmon) as primary source, smartctl as fallback
+  - smartctl 路径和 HBA 驱动类型自动检测
+  - sysfs 温度（hwmon）优先，smartctl 作为补充
 """
 
 import asyncio
@@ -23,7 +23,7 @@ from typing import Optional
 
 logger = logging.getLogger("fnos-fan.sensors")
 
-# -------- sysfs root paths (overridable for containers) --------
+# -------- sysfs 根路径（容器可覆盖）--------
 SYSFS_BASE = os.environ.get("SYSFS_PATH", "/sys")
 HWMON_BASE = os.path.join(SYSFS_BASE, "class/hwmon")
 BLOCK_BASE = os.path.join(SYSFS_BASE, "block")
@@ -31,7 +31,7 @@ DEV_BASE = os.environ.get("DEV_PATH", "/dev")
 THERMAL_BASE = os.path.join(SYSFS_BASE, "class/thermal")
 SCSI_HOST_BASE = os.path.join(SYSFS_BASE, "class/scsi_host")
 
-# -------- known smartctl install paths (ordered by likelihood) --------
+# -------- 已知 smartctl 安装路径（按可能性排序）--------
 _SMARTCTL_CANDIDATES = [
     "/usr/sbin/smartctl",
     "/usr/bin/smartctl",
@@ -43,11 +43,11 @@ _SMARTCTL_CANDIDATES = [
     "/opt/bin/smartctl",
 ]
 
-# -------- HBA / RAID driver → recommended smartctl -d fallback list --------
-# For drivers that need a specific device-type, the list is tried in order
+# -------- HBA / RAID 驱动 → 推荐的 smartctl -d 参数回退列表 --------
+# 需要指定设备类型的驱动，按顺序尝试直到 smartctl 返回有效数据
 # until smartctl returns valid data.
 _HBA_DRIVER_DEVICE_TYPES: dict[str, list[str]] = {
-    # LSI / Broadcom MegaRAID — needs slot number
+    # LSI / Broadcom MegaRAID — 需要槽位号
     "megaraid_sas":      ["", "megaraid,0", "megaraid,1", "megaraid,2", "megaraid,3",
                            "megaraid,4", "megaraid,5", "megaraid,6", "megaraid,7",
                            "megaraid,8", "megaraid,9", "megaraid,10", "megaraid,11",
@@ -66,7 +66,7 @@ _HBA_DRIVER_DEVICE_TYPES: dict[str, list[str]] = {
     "3w-sas":            ["3ware,0", "3ware,1", "3ware,2", "3ware,3",
                            "3ware,4", "3ware,5", "3ware,6", "3ware,7",
                            "3ware,8", "3ware,9"],
-    # Marvell SATA controllers
+    # Marvell SATA 控制器
     "mvsas":             ["", "marvell"],
     "sata_mv":           ["", "marvell"],
     # Areca RAID
@@ -77,13 +77,13 @@ _HBA_DRIVER_DEVICE_TYPES: dict[str, list[str]] = {
     # PMC / Microchip SAS
     "pm80xx":            ["", "sat"],
     "pmcraid":           ["", "sat"],
-    # HiSilicon SAS (Kunpeng / some ARM servers)
+    # 华为海思 SAS（鲲鹏等 ARM 服务器）
     "hisi_sas":          ["", "sat"],
-    # LSI / Broadcom SAS HBA (IT mode) — normally works with default/sat
+    # LSI / Broadcom SAS HBA（IT 模式）— 通常默认或 sat 即可
     "mpt3sas":           ["", "sat"],
     "mpt2sas":           ["", "sat"],
     "mptsas":            ["", "sat"],
-    # AHCI / ATA — normally works out of the box
+    # AHCI / ATA — 通常开箱即用
     "ahci":              [""],
     "ata_piix":          [""],
     "sata_sil":          [""],
@@ -100,49 +100,49 @@ _HBA_DRIVER_DEVICE_TYPES: dict[str, list[str]] = {
     # JMicron
     "jmicron":           [""],
     "ahci_jmicron":      [""],
-    # VirtIO (VMs)
+    # VirtIO（虚拟机）
     "virtio_scsi":       [""],
     "virtio_blk":        [""],
-    # USB storage — may need -d sat
+    # USB 存储 — 可能需要 -d sat
     "usb-storage":       ["", "sat", "usbjmicron", "usbprolific", "usbsunplus"],
     "uas":               ["", "sat", "usbjmicron", "usbprolific", "usbsunplus"],
 }
 
-# Generic fallback list when driver is unknown
+# 未知驱动时的通用回退列表
 _GENERIC_DEVICE_TYPES = [
     "", "sat", "auto", "scsi", "sas",
     "megaraid,0", "3ware,0", "cciss,0", "areca,0", "marvell",
 ]
 
-# Virtual block device prefixes to skip
+# 需要跳过的虚拟块设备前缀
 _SKIP_DEV_PREFIXES = frozenset([
-    "loop",   # loop devices
-    "ram",    # ramdisks
-    "zram",   # compressed ram
-    "nbd",    # network block device
-    "sr",     # optical drives
-    "pmem",   # persistent memory
+    "loop",   # 回环设备
+    "ram",    # 内存盘
+    "zram",   # 压缩内存
+    "nbd",    # 网络块设备
+    "sr",     # 光驱
+    "pmem",   # 持久内存
 ])
 
-# Virtual device names to skip (exact matches)
+# 需要跳过的虚拟设备名（前缀匹配）
 _SKIP_DEV_NAMES = frozenset([
-    "dm-",    # device mapper (starts with)
-    "md",     # software RAID (starts with)
-    "zd",     # zvol
+    "dm-",    # device mapper
+    "md",     # 软件 RAID
+    "zd",     # ZFS zvol
 ])
 
 
-# ======================== sensor name translation ========================
+# ======================== 传感器名翻译 ========================
 
 _HWMON_NAME_MAP: dict[str, str] = {
-    # CPU sensors
+    # CPU 传感器
     "coretemp":           "CPU核心",
     "k10temp":            "CPU",
     "zenpower":           "CPU",
     "cpu_thermal":        "CPU",
     "cpu-thermal":        "CPU",
     "pkg_temp_thermal":   "CPU封装",
-    # Motherboard / chipset
+    # 主板 / 芯片组
     "acpitz":             "主板",
     "pch_cannonlake":     "PCH芯片组",
     "pch_cometlake":      "PCH芯片组",
@@ -154,17 +154,17 @@ _HWMON_NAME_MAP: dict[str, str] = {
     "pch_haswell":        "PCH芯片组",
     "pch_broadwell":      "PCH芯片组",
     "pch":                "PCH芯片组",
-    # GPU
+    # 显卡
     "amdgpu":             "AMD显卡",
     "radeon":             "AMD显卡",
     "nouveau":            "NVIDIA显卡",
     "i915":               "Intel核显",
     "xe":                 "Intel核显",
     "gpu_thermal":        "GPU",
-    # Storage (NVMe hwmon entries)
+    # 存储（NVMe hwmon 条目）
     "nvme":               "NVMe硬盘",
     "drivetemp":          "SATA硬盘",
-    # Network
+    # 网卡
     "iwlwifi_1":          "WiFi网卡",
     "be2net":             "万兆网卡",
     "bnx2x":              "万兆网卡",
@@ -197,7 +197,7 @@ _HWMON_NAME_MAP: dict[str, str] = {
     "ath10k":             "WiFi网卡",
     "ath11k":             "WiFi网卡",
     "ath12k":             "WiFi网卡",
-    # Super I/O / hardware monitor chips
+    # Super I/O / 硬件监控芯片
     "thinkpad":           "主板",
     "dell_smm":           "主板",
     "it8620":             "主板",
@@ -291,7 +291,7 @@ _HWMON_NAME_MAP: dict[str, str] = {
     "gl518sm":            "主板",
     "gl520sm":            "主板",
     "thmc50":             "主板",
-    # Vendor-specific
+    # 厂商专用
     "asus":               "华硕主板",
     "asuswmi":            "华硕主板",
     "asusec":             "华硕主板",
@@ -301,7 +301,7 @@ _HWMON_NAME_MAP: dict[str, str] = {
     "corsairpsu":         "海盗船电源",
     "corsaircpro":        "海盗船控制器",
     "aquacomputer":       "Aqua电脑",
-    # ARM / embedded
+    # ARM / 嵌入式
     "scpi_sensors":       "系统传感器",
     "sun8i-thermal":      "CPU",
     "sun50i-thermal":     "CPU",
@@ -334,7 +334,7 @@ _HWMON_NAME_MAP: dict[str, str] = {
     "adt7490":            "温度传感器",
 }
 
-# Known sysfs label → Chinese translation
+# 已知 sysfs 标签 → 中文翻译
 _LABEL_MAP: dict[str, str] = {
     "Package id 0":        "CPU封装",
     "Core 0":              "核心0",  "Core 1":  "核心1",
@@ -400,16 +400,16 @@ _TYPE_SUFFIX: dict[str, str] = {
 }
 
 
-# ======================== dataclasses ========================
+# ======================== 数据类 ========================
 
 @dataclass
 class SensorInfo:
-    """Information about a detected sensor."""
+    """检测到的传感器信息。"""
     name: str
     sensor_type: str             # "temperature" | "fan_rpm" | "fan_pwm"
     source: str                  # "hwmon" | "smartctl" | "sysfs"
-    hwmon_path: str              # Base hwmon path
-    channel: int                 # Channel number (e.g. 1 for temp1_input)
+    hwmon_path: str              # hwmon 基础路径
+    channel: int                 # 通道号（如 temp1_input 则为 1）
     label: str = ""
     current_value: float = 0.0
     unit: str = ""
@@ -419,7 +419,7 @@ class SensorInfo:
 
 @dataclass
 class HwmonDevice:
-    """A detected hwmon device."""
+    """检测到的 hwmon 设备。"""
     hwmon_path: str
     name: str
     device_path: str = ""
@@ -430,21 +430,21 @@ class HwmonDevice:
 
 @dataclass
 class DiskInfo:
-    """Drive temperature info."""
-    device: str                  # e.g. "/dev/sda"
-    dev_name: str = ""           # e.g. "sda"
-    model: str = ""              # Drive model
-    serial: str = ""             # Serial number
-    temperature: float = 0.0     # Temperature in Celsius
+    """磁盘温度信息。"""
+    device: str                  # 如 "/dev/sda"
+    dev_name: str = ""           # 如 "sda"
+    model: str = ""              # 磁盘型号
+    serial: str = ""             # 序列号
+    temperature: float = 0.0     # 温度（摄氏度）
     is_nvme: bool = False
     smart_available: bool = True
     temp_source: str = ""        # "sysfs" | "smartctl"
 
 
-# ======================== helpers ========================
+# ======================== 辅助函数 ========================
 
 def _read_sysfs(path: str) -> Optional[str]:
-    """Read a single sysfs file, return stripped content or None."""
+    """读取单个 sysfs 文件，返回去除空白的内容或 None。"""
     try:
         with open(path, "r", encoding="ascii", errors="replace") as f:
             return f.read().strip()
@@ -453,7 +453,7 @@ def _read_sysfs(path: str) -> Optional[str]:
 
 
 def _read_sysfs_int(path: str) -> Optional[int]:
-    """Read a sysfs integer value."""
+    """读取 sysfs 整数值。"""
     s = _read_sysfs(path)
     if s is not None:
         try:
@@ -465,13 +465,13 @@ def _read_sysfs_int(path: str) -> Optional[int]:
 
 def translate_sensor_name(hwmon_name: str, channel: int, label: str = "",
                           sensor_type: str = "temperature") -> str:
-    """Translate raw hwmon sensor name to Chinese display name."""
+    """将原始 hwmon 传感器名翻译为中文显示名。"""
     if label:
-        # Direct label translation
+        # 直接标签翻译
         translated = _LABEL_MAP.get(label)
         if translated:
             return translated
-        # If label looks like a drive model (mixed case, > 8 chars), keep raw
+        # 如果标签看起来像硬盘型号（大小写混合、长度>8），保留原始文本
         if any(c.isupper() for c in label) and len(label) > 8:
             suffix = _TYPE_SUFFIX.get(sensor_type, "")
             return f"{label} {suffix}"
@@ -485,13 +485,13 @@ def translate_sensor_name(hwmon_name: str, channel: int, label: str = "",
 
 
 def _is_virtual_block_device(dev_name: str) -> bool:
-    """Check if a /sys/block device name is virtual (loop, dm, md, etc.)."""
-    # Exact prefix matches
+    """检查 /sys/block 设备是否为虚拟设备（loop、dm、md 等）。"""
+    # 精确前缀匹配
     if dev_name[:4] in _SKIP_DEV_PREFIXES:
         return True
     if dev_name[:3] in _SKIP_DEV_PREFIXES:
         return True
-    # Match starts-with patterns (dm-X, mdX)
+    # 前缀匹配（dm-0, md0 等）
     for prefix in _SKIP_DEV_NAMES:
         if dev_name.startswith(prefix):
             return True
@@ -499,11 +499,11 @@ def _is_virtual_block_device(dev_name: str) -> bool:
 
 
 def _find_smartctl() -> Optional[str]:
-    """Auto-detect the smartctl binary path."""
+    """自动检测 smartctl 二进制路径。"""
     for path in _SMARTCTL_CANDIDATES:
         if os.path.isfile(path) and os.access(path, os.X_OK):
             return path
-    # Last resort: which
+    # 最后手段：which
     try:
         result = subprocess.run(
             ["which", "smartctl"], capture_output=True, text=True, timeout=5
@@ -515,21 +515,21 @@ def _find_smartctl() -> Optional[str]:
     return None
 
 
-# ======================== HBA / sysfs helpers ========================
+# ======================== HBA / sysfs 辅助 ========================
 
 def _get_block_sysfs(dev_name: str, attr: str) -> Optional[str]:
-    """Read an attribute from /sys/block/<dev>/device/<attr>."""
+    """读取 /sys/block/<dev>/device/<attr> 属性。"""
     return _read_sysfs(os.path.join(BLOCK_BASE, dev_name, "device", attr))
 
 
 def _load_hba_info(dev_name: str) -> dict:
-    """Gather HBA/driver info for a block device from sysfs.
-    Returns a dict with keys: driver, transport, vendor, scsi_level, host.
+    """从 sysfs 收集块设备 HBA/驱动信息。
+    返回 dict，包含 driver, transport, vendor, scsi_level, host 等键。
     """
     info: dict = {}
     device_base = os.path.join(BLOCK_BASE, dev_name, "device")
 
-    # Driver name (readlink of .../device/driver)
+    # 驱动名（readlink .../device/driver）
     driver_link = os.path.join(device_base, "driver")
     try:
         driver_target = os.readlink(driver_link)
@@ -537,7 +537,7 @@ def _load_hba_info(dev_name: str) -> dict:
     except OSError:
         info["driver"] = ""
 
-    # Transport type
+    # 传输类型
     transport = os.path.join(device_base, "transport")
     try:
         transport_entries = os.listdir(transport) if os.path.isdir(transport) else []
@@ -545,11 +545,11 @@ def _load_hba_info(dev_name: str) -> dict:
     except OSError:
         info["transport"] = ""
 
-    # SCSI level / type
+    # SCSI 级别 / 类型
     info["scsi_type"] = _read_sysfs(os.path.join(device_base, "type") or "")
     info["scsi_level"] = _read_sysfs(os.path.join(device_base, "scsi_level") or "")
 
-    # Vendor (e.g. "ATA     ", "SEAGATE ", "HGST    ")
+    # 厂商（如 "ATA     ", "SEAGATE ", "HGST    "）
     info["vendor"] = (_read_sysfs(os.path.join(device_base, "vendor")) or "").strip()
 
     return info
@@ -563,34 +563,34 @@ def _get_smartctl_device_types(hba_info: dict) -> list[str]:
     transport = hba_info.get("transport", "") or ""
     vendor = hba_info.get("vendor", "") or ""
 
-    # Look up by driver name (partial match for variants)
+    # 按驱动名查找（支持变体部分匹配）
     for known_drv, types in _HBA_DRIVER_DEVICE_TYPES.items():
         if driver == known_drv or driver.startswith(known_drv):
             return types
 
-    # Heuristics based on transport type
+    # 基于传输类型的启发式判断
     if transport == "usb":
         return ["", "sat", "usbjmicron", "usbprolific", "usbsunplus"]
 
-    # Unknown driver — use a safe generic list
+    # 未知驱动 — 使用安全的通用列表
     return _GENERIC_DEVICE_TYPES
 
 
-# ======================== sysfs disk temperature ========================
+# ======================== sysfs 磁盘温度 ========================
 
 def _read_disk_temp_from_sysfs(dev_name: str) -> Optional[float]:
-    """Try to read disk temperature via sysfs hwmon (no smartctl needed).
+    """尝试通过 sysfs hwmon 读取磁盘温度（不需要 smartctl）。
 
-    Looks in:
+    查找路径：
       1. /sys/block/<dev>/device/hwmon/hwmon*/temp*_input
-      2. /sys/block/<dev>/device/hwmon/hwmon*/name for nvme-type entries
-    Returns temperature in Celsius or None.
+      2. /sys/block/<dev>/device/hwmon/hwmon*/name（nvme 类型）
+    返回摄氏度温度或 None。
     """
     device_base = os.path.join(BLOCK_BASE, dev_name, "device")
     hwmon_dir = os.path.join(device_base, "hwmon")
 
     if not os.path.isdir(hwmon_dir):
-        # Some NVMe expose under /sys/class/nvme/<dev>/hwmon*
+        # 部分 NVMe 在 /sys/class/nvme/<dev>/hwmon* 下暴露
         nvme_base = os.path.join(SYSFS_BASE, "class", "nvme", dev_name, "hwmon")
         if os.path.isdir(nvme_base):
             hwmon_dir = nvme_base
@@ -602,7 +602,7 @@ def _read_disk_temp_from_sysfs(dev_name: str) -> Optional[float]:
             hwmon_path = os.path.join(hwmon_dir, hwmon_name)
             if not os.path.isdir(hwmon_path):
                 continue
-            # Scan for temp*_input
+            # 扫描 temp*_input
             for entry in sorted(os.listdir(hwmon_path)):
                 m = re.match(r"^temp(\d+)_input$", entry)
                 if m:
@@ -616,13 +616,13 @@ def _read_disk_temp_from_sysfs(dev_name: str) -> Optional[float]:
 
 
 def _read_disk_model_serial_from_sysfs(dev_name: str) -> tuple[str, str]:
-    """Read model and serial from sysfs. Returns (model, serial)."""
+    """从 sysfs 读取型号和序列号。返回 (model, serial)。"""
     device_base = os.path.join(BLOCK_BASE, dev_name, "device")
 
     model = (_read_sysfs(os.path.join(device_base, "model")) or "").strip()
     serial = (_read_sysfs(os.path.join(device_base, "serial")) or "").strip()
 
-    # Model may be multi-word separated by spaces; normalize
+    # 型号可能是空格分隔的多词，规范化
     if model:
         model = " ".join(model.split())
     if serial:
@@ -632,28 +632,28 @@ def _read_disk_model_serial_from_sysfs(dev_name: str) -> tuple[str, str]:
 
 
 def _read_disk_rotational(dev_name: str) -> bool:
-    """Check whether a block device is rotational (HDD) or not (SSD).
-    Returns True for HDD, False for SSD/unknown.
+    """检查块设备是否为机械盘（HDD）。
+    HDD 返回 True，SSD/未知 返回 False。
     """
     val = _read_sysfs(os.path.join(BLOCK_BASE, dev_name, "queue", "rotational"))
     return val == "1"
 
 
 def _read_disk_size_bytes(dev_name: str) -> int:
-    """Read block device size in bytes from sysfs."""
+    """从 sysfs 读取块设备大小（字节）。"""
     val = _read_sysfs_int(os.path.join(BLOCK_BASE, dev_name, "size"))
     if val:
-        return val * 512  # sysfs reports in 512-byte sectors
+        return val * 512  # sysfs 以 512 字节扇区为单位
     return 0
 
 
-# ======================== Main Scanner ========================
+# ======================== 主扫描器 ========================
 
 class SensorScanner:
-    """Scans the system for all available hardware sensors."""
+    """扫描系统中所有可用的硬件传感器。"""
 
     def __init__(self, smartctl_path: str = "", enable_smartctl: bool = True):
-        # Auto-detect smartctl: try provided path first, then auto-search
+        # 自动检测 smartctl：先用提供的路径，不行再自动搜索
         if enable_smartctl:
             if smartctl_path and os.path.isfile(smartctl_path):
                 pass  # Use provided path
@@ -678,7 +678,7 @@ class SensorScanner:
         else:
             logger.info("smartctl not found; will rely on sysfs for disk temperatures")
 
-    # ---- sysfs helpers (instance methods for consistent SYSFS_BASE) ----
+    # ---- sysfs 辅助（实例方法，保持一致的 SYSFS_BASE）----
 
     def _sysfs_str(self, path: str) -> Optional[str]:
         return _read_sysfs(path)
@@ -695,10 +695,10 @@ class SensorScanner:
             logger.warning(f"Failed to write {path}: {e}")
             return False
 
-    # =================== hwmon scanning ===================
+    # =================== hwmon 扫描 ===================
 
     def scan_hwmon(self) -> list[HwmonDevice]:
-        """Scan /sys/class/hwmon for all devices and their sensors."""
+        """扫描 /sys/class/hwmon 下所有设备及其传感器。"""
         self.hwmon_devices.clear()
 
         if not os.path.isdir(HWMON_BASE):
@@ -716,7 +716,7 @@ class SensorScanner:
 
             device = HwmonDevice(hwmon_path=hwmon_path, name=name, device_path=device_path)
 
-            # Temperature sensors
+            # 温度传感器
             for entry in sorted(os.listdir(hwmon_path)):
                 m = re.match(r"^temp(\d+)_input$", entry)
                 if m:
@@ -729,7 +729,7 @@ class SensorScanner:
                         label=label, unit="C", raw_name=name, dev_path=device_path,
                     ))
 
-            # Fan RPM sensors
+            # 风扇转速传感器
             for entry in sorted(os.listdir(hwmon_path)):
                 m = re.match(r"^fan(\d+)_input$", entry)
                 if m:
@@ -742,7 +742,7 @@ class SensorScanner:
                         label=label, unit="RPM", raw_name=name, dev_path=device_path,
                     ))
 
-            # PWM controls
+            # PWM 控制器
             for entry in sorted(os.listdir(hwmon_path)):
                 m = re.match(r"^pwm(\d+)$", entry)
                 if m:
@@ -765,16 +765,16 @@ class SensorScanner:
 
         return self.hwmon_devices
 
-    # =================== disk scanning ===================
+    # =================== 磁盘扫描 ===================
 
     async def scan_disks(self) -> list[DiskInfo]:
-        """Scan all physical block devices for temperature.
+        """扫描所有物理块设备的温度。
 
-        Strategy (per device):
-          1. Try sysfs hwmon temperature (fast, no smartctl needed).
-          2. If not available, use smartctl with auto-detected HBA params.
+        策略（每个设备）：
+          1. 先试 sysfs hwmon 温度（快，不需要 smartctl）。
+          2. 读不到则用 smartctl（自动检测 HBA 参数）。
 
-        Skips virtual devices (loop, dm, md, ram, zram, nbd, sr, pmem).
+        跳过虚拟设备（loop, dm, md, ram, zram, nbd, sr, pmem）。
         """
         self.disks.clear()
 
@@ -782,12 +782,12 @@ class SensorScanner:
             logger.warning(f"{BLOCK_BASE} does not exist")
             return []
 
-        # Collect physical block devices
+        # 收集物理块设备
         physical_devs: list[str] = []
         for dev_name in sorted(os.listdir(BLOCK_BASE)):
             if _is_virtual_block_device(dev_name):
                 continue
-            # Check it has a real device backing (virtual block devs lack /sys/block/X/device)
+            # 检查是否有真实设备支撑（虚拟块设备无 /sys/block/X/device）
             device_dir = os.path.join(BLOCK_BASE, dev_name, "device")
             if not os.path.exists(device_dir):
                 continue
@@ -795,15 +795,15 @@ class SensorScanner:
 
         logger.info(f"Found {len(physical_devs)} physical block devices: {physical_devs}")
 
-        # Process each device — some via sysfs, some via smartctl
-        # Gather smartctl tasks to run in parallel later
+        # 逐一处理 — 部分通过 sysfs，部分通过 smartctl
+        # 收集 smartctl 任务，稍后并行执行
         smartctl_tasks: list[tuple[str, str, bool, dict]] = []
 
         for dev_name in physical_devs:
             dev_path = f"{DEV_BASE}/{dev_name}"
             is_nvme = dev_name.startswith("nvme")
 
-            # Step 1: try sysfs temperature
+            # 第一步：尝试 sysfs 温度
             sysfs_temp = _read_disk_temp_from_sysfs(dev_name)
             model, serial = _read_disk_model_serial_from_sysfs(dev_name)
 
@@ -819,9 +819,9 @@ class SensorScanner:
                 logger.info(f"Disk {dev_path} [sysfs]: {model} - {sysfs_temp:.1f}C")
                 continue
 
-            # Step 2: need smartctl
+            # 第二步：需要 smartctl
             if not self.smartctl_path:
-                # Record the disk even without temperature (at least show it exists)
+                # 即使没有温度也记录磁盘（至少显示其存在）
                 if model:
                     disk = DiskInfo(
                         device=dev_path, dev_name=dev_name,
@@ -836,9 +836,9 @@ class SensorScanner:
             hba_info = _load_hba_info(dev_name)
             smartctl_tasks.append((dev_name, dev_path, is_nvme, hba_info))
 
-        # Run smartctl queries in parallel (batched, each batch = concurrency limit)
+        # 并行执行 smartctl 查询（分批，每批=并发上限）
         if smartctl_tasks:
-            concurrency = min(len(smartctl_tasks), 8)  # max 8 concurrent
+            concurrency = min(len(smartctl_tasks), 8)  # 最多 8 个并发
             semaphore = asyncio.Semaphore(concurrency)
 
             async def _query_one(dev_name: str, dev_path: str, is_nvme: bool,
@@ -856,14 +856,14 @@ class SensorScanner:
                 if disk is not None:
                     self.disks.append(disk)
 
-        # Sort by device name for consistent output
+        # 按设备名排序，保持输出一致
         self.disks.sort(key=lambda d: d.dev_name)
         return self.disks
 
     async def _smartctl_query_disk(
         self, dev_name: str, dev_path: str, is_nvme: bool, hba_info: dict
     ) -> Optional[DiskInfo]:
-        """Query a single disk via smartctl, trying recommended device types."""
+        """查询单个磁盘（smartctl），尝试推荐的设备类型。"""
         device_types = _get_smartctl_device_types(hba_info)
 
         model, serial = _read_disk_model_serial_from_sysfs(dev_name)
@@ -888,7 +888,7 @@ class SensorScanner:
 
                 data = json.loads(json_str)
 
-                # Extract model/serial from smartctl output if sysfs didn't have them
+                # 如果 sysfs 没有型号/序列号，从 smartctl 输出提取
                 smart_model = data.get("model_name", "") or data.get("product", "") or ""
                 smart_serial = data.get("serial_number", "") or ""
                 if not model:
@@ -896,13 +896,13 @@ class SensorScanner:
                 if not serial:
                     serial = smart_serial
 
-                # Skip if no meaningful data at all
+                # 没有任何有意义数据则跳过
                 has_attrs = bool(data.get("ata_smart_attributes"))
                 has_temp = bool(data.get("temperature"))
                 if not smart_model and not model and not has_attrs and not has_temp:
                     continue
 
-                # Extract temperature
+                # 提取温度
                 temp_val = 0
 
                 if is_nvme:
@@ -939,7 +939,7 @@ class SensorScanner:
                 logger.debug(f"smartctl -d {dev_type or 'auto'} on {dev_path}: {e}")
                 continue
 
-        # All types failed — still record the disk if we have a model name
+        # 所有类型都失败了 — 有型号名的话仍然记录该磁盘
         if model:
             return DiskInfo(
                 device=dev_path, dev_name=dev_name,
@@ -951,17 +951,17 @@ class SensorScanner:
         return None
 
     def _parse_sata_temp(self, data: dict) -> int:
-        """Extract temperature from SATA/SAS smartctl -A -j JSON output.
+        """从 SATA/SAS smartctl -A -j JSON 输出中提取温度。
 
-        Handles various ATA attribute formats from different drive vendors
-        (Seagate, WD, HGST, Toshiba, Samsung, etc.).
+        兼容不同厂商的 ATA 属性格式
+        （希捷、西数、日立、东芝、三星等）。
         """
         attributes = data.get("ata_smart_attributes", {}).get("table", [])
         for attr in attributes:
             attr_id = attr.get("id", 0)
             attr_name = attr.get("name", "")
 
-            # Standard temperature attributes: 194, 190, 231
+            # 标准温度属性：194, 190, 231
             is_temp_attr = (
                 attr_id in (190, 194, 231) or
                 "Temperature" in attr_name or
@@ -970,19 +970,19 @@ class SensorScanner:
             if not is_temp_attr:
                 continue
 
-            # --- Method 1: normalized value (direct Celsius for most drives) ---
+            # --- 方法 1：归一化值（大部分盘直接就是摄氏度）---
             norm_val = attr.get("value", 0)
             if isinstance(norm_val, (int, float)) and 0 < norm_val <= 200:
                 return int(norm_val)
 
-            # --- Method 2: raw value dictionary ---
+            # --- 方法 2：raw value 字典 ---
             raw = attr.get("raw", {})
             if isinstance(raw, dict):
-                # 'value' field (integer)
+                # 'value' 字段（整数）
                 raw_int = raw.get("value", 0)
                 if isinstance(raw_int, int) and 0 < raw_int <= 200:
                     return raw_int
-                # 'string' field: common format "45" or "45 (Min/Max 30/60)"
+                # 'string' 字段：常见格式 "45" 或 "45 (Min/Max 30/60)"
                 raw_str = raw.get("string", "")
                 if raw_str:
                     m = re.match(r"^(\d+)", raw_str.strip())
@@ -994,7 +994,7 @@ class SensorScanner:
                 if 0 < raw <= 200:
                     return int(raw)
 
-            # Found temp attribute but couldn't parse — stop looking
+            # 找到了温度属性但无法解析 — 停止查找
             break
 
         # --- Method 3: top-level temperature field (SAS drives, some NVMe) ---
@@ -1020,7 +1020,7 @@ class SensorScanner:
 
         return 0
 
-    # =================== sensor reading ===================
+    # =================== 传感器读取 ===================
 
     def read_temperature(self, sensor: SensorInfo) -> float:
         val = self._sysfs_int(os.path.join(sensor.hwmon_path, f"temp{sensor.channel}_input"))
@@ -1032,14 +1032,14 @@ class SensorScanner:
     def read_pwm(self, sensor: SensorInfo) -> int:
         return self._sysfs_int(os.path.join(sensor.hwmon_path, f"pwm{sensor.channel}")) or 0
 
-    # =================== fan control ===================
+    # =================== 风扇控制 ===================
 
     def write_pwm(self, hwmon_path: str, channel: int, value: int) -> bool:
         value = max(0, min(255, int(value)))
         return self._write_file(os.path.join(hwmon_path, f"pwm{channel}"), str(value))
 
     def set_fan_mode(self, hwmon_path: str, channel: int, mode: int) -> bool:
-        """Set fan mode. mode: 0=full, 1=manual(PWM), 2=auto, 3=disabled."""
+        """设置风扇模式。mode: 0=全速, 1=手动(PWM), 2=自动, 3=禁用。"""
         enable_path = os.path.join(hwmon_path, f"pwm{channel}_enable")
         if self._write_file(enable_path, str(mode)):
             return True
@@ -1052,7 +1052,7 @@ class SensorScanner:
             return val
         return self._sysfs_int(os.path.join(hwmon_path, f"pwm{channel}_mode"))
 
-    # =================== bulk reads ===================
+    # =================== 批量读取 ===================
 
     def get_all_temperatures(self) -> dict[str, float]:
         result: dict[str, float] = {}
@@ -1084,7 +1084,7 @@ class SensorScanner:
                 result[sensor.name] = pwm
         return result
 
-    # =================== serialization ===================
+    # =================== 序列化 ===================
 
     def to_dict(self) -> dict:
         return {

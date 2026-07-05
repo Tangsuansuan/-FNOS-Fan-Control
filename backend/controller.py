@@ -31,7 +31,7 @@ class CurveInterpolator:
     def interpolate(self, temperature: float) -> int:
         """Get PWM value for a given temperature."""
         if not self.points:
-            return 128  # Safe default: 50% speed
+            return 128  # 安全默认值: 50% speed
 
         # Below the first point
         if temperature <= self.points[0].temp:
@@ -57,7 +57,7 @@ class CurveInterpolator:
 
 @dataclass
 class FanRuntimeState:
-    """Runtime state for a single fan."""
+    """单个风扇的运行时状态。"""
     config: FanConfig
     interpolator: Optional[CurveInterpolator] = None
     last_temp: float = 0.0
@@ -121,14 +121,14 @@ class FanController:
         self._update_callback = callback
 
     def reload_config(self, config: AppConfig):
-        """Reload configuration and reinitialize fan states."""
+        """重新加载配置并重建风扇状态。"""
         self.config = config
         self.sys_temp_history = deque(maxlen=config.data_history_length)
         self._init_fan_states()
         self._notifier.reload_config(config.model_dump())
 
     async def start(self):
-        """Start the control loop."""
+        """启动控制循环。"""
         if self._running:
             return
         self._running = True
@@ -138,7 +138,7 @@ class FanController:
         logger.info("Fan control loop started")
 
     async def stop(self):
-        """Stop the control loop."""
+        """停止控制循环。"""
         self._running = False
         if self._task:
             self._task.cancel()
@@ -164,7 +164,7 @@ class FanController:
         logger.info("Fan control loop stopped, fans restored to auto mode")
 
     async def _periodic_cleanup(self):
-        """Periodically clean up old history records."""
+        """定期清理过期历史记录。"""
         await asyncio.sleep(10)  # Wait for system to settle
         while self._running:
             try:
@@ -247,8 +247,8 @@ class FanController:
             await asyncio.sleep(self.config.update_interval)
 
     async def _run_single_iteration(self):
-        """Execute one control loop iteration."""
-        # Read all temperatures
+        """执行一次控制循环迭代。"""
+        # 读取所有温度
         all_temps = self.scanner.get_all_temperatures()
         all_rpms = self.scanner.get_all_fan_rpms()
         all_pwms = self.scanner.get_all_pwms()
@@ -256,7 +256,7 @@ class FanController:
         timestamp = time.time()
         self.last_update_time = timestamp
 
-        # Persist temperatures to SQLite
+        # 将温度持久化到 SQLite
         for name, val in all_temps.items():
             if val > 0:
                 try:
@@ -276,22 +276,22 @@ class FanController:
             if state.config.mode == "manual":
                 target_pwm = state.config.manual_pwm
             elif state.config.mode == "auto":
-                # Skip control, just read current values
+                # 跳过控制，仅读取当前值
                 continue
             elif state.config.mode == "curve" and state.interpolator:
                 raw_pwm = state.interpolator.interpolate(ref_temp)
-                # Apply minimum PWM
+                # 应用最小 PWM
                 target_pwm = max(raw_pwm, state.config.min_pwm)
-                # Apply hysteresis
+                # 应用滞后
                 target_pwm = self._apply_hysteresis(state, ref_temp, target_pwm)
             else:
-                target_pwm = 128  # Safe default
+                target_pwm = 128  # 安全默认值
 
             state.target_pwm = target_pwm
 
-            # Write PWM to hardware
+            # 写入 PWM 到硬件
             if state.config.mode == "curve" or state.config.mode == "manual":
-                # Ensure manual mode is set
+                # 确保手动模式已设置
                 if not state.manual_mode_set:
                     if self.scanner.set_fan_mode(
                         state.config.hwmon_path,
@@ -309,7 +309,7 @@ class FanController:
             state.last_pwm = target_pwm
             state.pwm_history.append((timestamp, target_pwm))
 
-            # Read current RPM
+            # 读取当前转速
             current_rpm = 0
             for dev in self.scanner.hwmon_devices:
                 for sensor in dev.fan_rpms:
@@ -319,7 +319,7 @@ class FanController:
                         state.rpm_history.append((timestamp, current_rpm))
                         break
 
-            # Persist fan state to SQLite
+            # 将风扇状态持久化到 SQLite
             try:
                 write_fan_state(state.config.name, target_pwm, current_rpm, timestamp)
             except Exception:
@@ -330,7 +330,7 @@ class FanController:
                 f"pwm={target_pwm}/255 ({target_pwm*100//255}%)"
             )
 
-        # Update system temp history
+        # 更新系统温度历史
         sys_temp = max((v for v in all_temps.values() if v > 0), default=0.0)
         self.sys_temp_history.append((timestamp, {
             "timestamp": timestamp,
@@ -339,10 +339,10 @@ class FanController:
             "pwms": dict(all_pwms),
         }))
 
-        # Check alerts and send emails
+        # 检查告警并发送邮件
         self._check_and_send_alerts()
 
-        # Call update callback if set
+        # 调用状态更新回调
         if self._update_callback:
             try:
                 await self._update_callback(self.get_status())
@@ -350,7 +350,7 @@ class FanController:
                 logger.error(f"Update callback error: {e}")
 
     def _check_and_send_alerts(self):
-        """Check temperature thresholds and send email alerts."""
+        """检查温度阈值并发送邮件告警。"""
         if not self.config.enable_alerts:
             return
 
@@ -467,7 +467,7 @@ class FanController:
         return False
 
     def get_history(self, fan_name: Optional[str] = None, limit: int = 100) -> dict:
-        """Get historical data for charts."""
+        """获取图表的历史数据。"""
         result = {"system": [], "fans": {}}
 
         # System history

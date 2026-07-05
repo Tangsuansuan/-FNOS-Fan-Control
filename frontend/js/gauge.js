@@ -1,6 +1,6 @@
 /**
- * Car-style dashboard gauge — Canvas-based semicircular gauge.
- * Usage: new Gauge(canvasId, options)
+ * 汽车仪表盘风格的半圆形表盘。
+ * 调用方式: new Gauge(canvasId, options)
  */
 
 class Gauge {
@@ -16,12 +16,14 @@ class Gauge {
         this.warn = options.warn || 60;   // yellow starts
         this.crit = options.crit || 80;    // red starts
         this.resolution = window.devicePixelRatio || 1;
+        this._target = 0;
+        this._animating = false;
     }
 
     setValue(val) {
         const prev = this.value;
         this.value = Math.max(this.min, Math.min(this.max, val));
-        // Smooth animate
+        // 平滑动画过渡
         if (Math.abs(this.value - prev) > 1) {
             this._target = this.value;
             this.value = prev;
@@ -32,7 +34,7 @@ class Gauge {
     draw() {
         if (!this.canvas) return;
 
-        // Handle animation
+        // 动画处理
         if (this._animating && Math.abs(this.value - this._target) > 0.3) {
             this.value += (this._target - this.value) * 0.3;
             if (Math.abs(this._target - this.value) < 0.5) {
@@ -53,19 +55,19 @@ class Gauge {
 
         ctx.clearRect(0, 0, w, h);
 
-        // Angle range: 225° to 315° (bottom-left to bottom-right, 270° span)
+        // 角度范围：225° 到 315°（左下到右下，270° 跨度）
         const startAngle = -225 * Math.PI / 180;
         const endAngle = 45 * Math.PI / 180;
         const range = endAngle - startAngle;
 
-        // Background arc
+        // 背景弧
         ctx.beginPath();
         ctx.arc(cx, cy, radius, startAngle, endAngle);
         ctx.strokeStyle = '#2a2a3a';
         ctx.lineWidth = radius * 0.18;
         ctx.stroke();
 
-        // Color zones
+        // 颜色分区
         const colorZones = [
             { from: this.min, to: this.warn, color: '#22c55e' },
             { from: this.warn, to: this.crit, color: '#eab308' },
@@ -83,7 +85,7 @@ class Gauge {
             ctx.stroke();
         });
 
-        // Tick marks
+        // 刻度标记
         const tickCount = 8;
         for (let i = 0; i <= tickCount; i++) {
             const val = this.min + i * (this.max - this.min) / tickCount;
@@ -97,7 +99,7 @@ class Gauge {
             ctx.lineWidth = 1.5;
             ctx.stroke();
 
-            // Tick label
+            // 刻度标签
             const labelR = radius * 0.65;
             ctx.fillStyle = '#888';
             ctx.font = `${Math.round(radius * 0.12)}px monospace`;
@@ -106,7 +108,7 @@ class Gauge {
             ctx.fillText(Math.round(val), cx + labelR * Math.cos(angle), cy + labelR * Math.sin(angle));
         }
 
-        // Needle
+        // 指针
         const valueRatio = (this.value - this.min) / (this.max - this.min);
         const needleAngle = startAngle + valueRatio * range;
 
@@ -116,7 +118,7 @@ class Gauge {
             y: cy + needleLen * Math.sin(needleAngle),
         };
 
-        // Needle shadow
+        // 指针 shadow
         ctx.beginPath();
         ctx.moveTo(cx, cy);
         ctx.lineTo(needleTip.x + 2, needleTip.y + 2);
@@ -124,7 +126,7 @@ class Gauge {
         ctx.strokeStyle = 'rgba(0,0,0,0.3)';
         ctx.stroke();
 
-        // Needle body
+        // 指针 body
         const needleColor = this.value >= this.crit ? '#ef4444' :
                            this.value >= this.warn ? '#eab308' : '#ef4444';
         ctx.beginPath();
@@ -134,7 +136,7 @@ class Gauge {
         ctx.lineWidth = 3;
         ctx.stroke();
 
-        // Needle base circle
+        // 指针 base circle
         ctx.beginPath();
         ctx.arc(cx, cy, radius * 0.1, 0, Math.PI * 2);
         ctx.fillStyle = '#333';
@@ -143,7 +145,7 @@ class Gauge {
         ctx.lineWidth = 2;
         ctx.stroke();
 
-        // Digital value in center
+        // 中央数字显示
         ctx.fillStyle = '#fff';
         ctx.font = `bold ${Math.round(radius * 0.22)}px monospace`;
         ctx.textAlign = 'center';
@@ -151,13 +153,13 @@ class Gauge {
         const valueY = cy - radius * 0.1;
         ctx.fillText(this.value.toFixed(1), cx, valueY);
 
-        // Unit
+        // 单位
         ctx.fillStyle = '#aaa';
         ctx.font = `${Math.round(radius * 0.1)}px sans-serif`;
         ctx.textBaseline = 'top';
         ctx.fillText(this.unit, cx, valueY + 4);
 
-        // Title
+        // 标题
         ctx.fillStyle = '#999';
         ctx.font = `${Math.round(radius * 0.09)}px sans-serif`;
         ctx.fillText(this.title, cx, cy + radius * 0.28);

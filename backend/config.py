@@ -1,6 +1,6 @@
 """
-Configuration management for FNOS Fan Controller.
-Handles loading, saving, and runtime configuration updates.
+FNOS 风扇控制器配置管理。
+处理配置文件的加载、保存和运行时更新。
 """
 
 import json
@@ -52,28 +52,28 @@ class AppConfig(BaseModel):
     update_interval: int = Field(default=2, description="Control loop interval in seconds")
     data_history_length: int = Field(default=300, description="Number of historical data points to keep")
     enable_smartctl: bool = Field(default=True, description="Enable smartctl for HDD temperatures")
-    smartctl_path: str = Field(default="", description="Path to smartctl binary (empty = auto-detect)")
+    smartctl_path: str = Field(default="", description="smartctl 路径（留空=自动检测）")
     web_port: int = Field(default=8070, description="Web server port")
     fans: list[FanConfig] = Field(default_factory=list, description="Fan configurations")
     auto_detect: bool = Field(default=True, description="Auto-detect sensors on startup")
     log_level: str = Field(default="INFO", description="Log level: DEBUG | INFO | WARNING | ERROR")
-    enable_alerts: bool = Field(default=False, description="Enable temperature alerts")
-    alert_temp_cpu: float = Field(default=85.0, description="CPU alert temperature")
-    alert_temp_disk: float = Field(default=60.0, description="Disk alert temperature")
+    enable_alerts: bool = Field(default=False, description="启用温度告警")
+    alert_temp_cpu: float = Field(default=85.0, description="CPU 告警温度")
+    alert_temp_disk: float = Field(default=60.0, description="硬盘告警温度")
 
-    # History retention
-    history_retention_days: int = Field(default=30, ge=3, le=90, description="Days to keep temperature/fan history (3/7/30/90)")
+    # 历史记录保留
+    history_retention_days: int = Field(default=30, ge=3, le=90, description="温度/风扇历史保留天数（3/7/30/90）")
 
-    # Email alert (SMTP) settings
-    alert_enabled: bool = Field(default=False, description="Send email alerts")
-    alert_cooldown_minutes: int = Field(default=30, ge=5, le=1440, description="Minimum interval between alert emails")
-    smtp_host: str = Field(default="", description="SMTP server hostname")
-    smtp_port: int = Field(default=465, description="SMTP server port")
-    smtp_user: str = Field(default="", description="SMTP username")
-    smtp_password: str = Field(default="", description="SMTP password")
-    smtp_from: str = Field(default="", description="From address (defaults to smtp_user)")
-    smtp_to: str = Field(default="", description="Alert recipient email")
-    smtp_use_tls: bool = Field(default=True, description="Use SSL/TLS connection")
+    # 邮件告警（SMTP）
+    alert_enabled: bool = Field(default=False, description="发送邮件告警")
+    alert_cooldown_minutes: int = Field(default=30, ge=5, le=1440, description="告警邮件最小间隔")
+    smtp_host: str = Field(default="", description="SMTP 服务器地址")
+    smtp_port: int = Field(default=465, description="SMTP 端口")
+    smtp_user: str = Field(default="", description="SMTP 用户名")
+    smtp_password: str = Field(default="", description="SMTP 密码")
+    smtp_from: str = Field(default="", description="发件人地址（默认同用户名）")
+    smtp_to: str = Field(default="", description="告警收件邮箱")
+    smtp_use_tls: bool = Field(default=True, description="使用 SSL/TLS 连接")
 
 
 DEFAULT_CONFIG_PATH = "/etc/fnos-fan-control/config.json"
