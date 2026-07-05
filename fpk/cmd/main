@@ -34,22 +34,13 @@ mkdir -p /var/log/${APP_NAME} /var/run /etc/${APP_NAME}
 
 # 确定用哪个 python
 find_python() {
-    # 优先 system python3（可能装了 apt 的 fastapi）
-    if command -v python3 &>/dev/null && python3 -c "import fastapi" 2>/dev/null; then
-        echo "python3"
-        return
-    fi
-    # 回退 venv
     if [ -f "$VENV_PYTHON" ]; then
         echo "$VENV_PYTHON"
-        return
-    fi
-    # 纯 python3 但没 fastapi，启动时会尝试装
-    if command -v python3 &>/dev/null; then
+    elif command -v python3 &>/dev/null; then
         echo "python3"
-        return
+    else
+        echo ""
     fi
-    echo ""
 }
 
 is_running() {
