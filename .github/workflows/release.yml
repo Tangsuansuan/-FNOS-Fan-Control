@@ -1,0 +1,42 @@
+name: 构建并发布 FPK
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装依赖 (generate_icons)
+        run: |
+          # generate_icons.py 是纯 Python，不需要额外依赖
+          cd fpk
+
+      - name: 生成图标
+        run: |
+          cd fpk
+          python3 generate_icons.py
+
+      - name: 构建 x86 FPK
+        run: |
+          cd fpk
+          bash build-fpk.sh x86
+
+      - name: 构建 arm FPK
+        run: |
+          cd fpk
+          bash build-fpk.sh arm
+
+      - name: 创建 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            dist/*.fpk
