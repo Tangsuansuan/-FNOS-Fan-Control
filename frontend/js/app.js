@@ -667,9 +667,21 @@ function renderHistoryCharts(tempData, fanData) {
                 animation: { duration: 300 },
                 scales: {
                     x: { type: 'time', time: { tooltipFormat: 'MM-dd HH:mm' }, grid: { color: '#333' } },
-                    y: { title: { text: '°C', display: true }, grid: { color: '#333' } },
+                    y: { title: { text: '°C', display: true }, grid: { color: '#333' }, min: 0 },
                 },
-                plugins: { legend: { labels: { color: '#aaa', usePointStyle: true, boxWidth: 8 } } },
+                plugins: {
+                    legend: { labels: { color: '#aaa', usePointStyle: true, boxWidth: 8 } },
+                    zoom: {
+                        pan: { enabled: true, mode: 'x' },
+                        zoom: {
+                            wheel: { enabled: true },
+                            pinch: { enabled: true },
+                            drag: { enabled: true, backgroundColor: 'rgba(79,140,247,0.15)', borderColor: '#4f8cf7' },
+                            mode: 'x',
+                        },
+                        limits: { x: { minRange: 60000 } },
+                    },
+                },
             },
         });
     }
@@ -705,9 +717,21 @@ function renderHistoryCharts(tempData, fanData) {
                 animation: { duration: 300 },
                 scales: {
                     x: { type: 'time', time: { tooltipFormat: 'MM-dd HH:mm' }, grid: { color: '#333' } },
-                    y: { title: { text: 'PWM (0-255)', display: true }, grid: { color: '#333' } },
+                    y: { title: { text: 'PWM (0-255)', display: true }, grid: { color: '#333' }, min: 0, max: 255 },
                 },
-                plugins: { legend: { labels: { color: '#aaa', usePointStyle: true, boxWidth: 8 } } },
+                plugins: {
+                    legend: { labels: { color: '#aaa', usePointStyle: true, boxWidth: 8 } },
+                    zoom: {
+                        pan: { enabled: true, mode: 'x' },
+                        zoom: {
+                            wheel: { enabled: true },
+                            pinch: { enabled: true },
+                            drag: { enabled: true, backgroundColor: 'rgba(79,140,247,0.15)', borderColor: '#4f8cf7' },
+                            mode: 'x',
+                        },
+                        limits: { x: { minRange: 60000 } },
+                    },
+                },
             },
         });
     }

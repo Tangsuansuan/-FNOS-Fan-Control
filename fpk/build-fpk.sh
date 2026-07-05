@@ -109,7 +109,8 @@ fi
 # Step 3: Create temporary build directory
 info "Step 3: Assembling FPK package..."
 
-WORK_DIR=$(mktemp -d)
+WORK_DIR="$(cd "$SCRIPT_DIR" && pwd)/.build-tmp"
+rm -rf "$WORK_DIR"
 PKG_DIR="$WORK_DIR/package"
 mkdir -p "$PKG_DIR"
 

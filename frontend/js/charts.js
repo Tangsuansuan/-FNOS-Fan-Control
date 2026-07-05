@@ -52,6 +52,16 @@ const Charts = {
                     borderColor: '#2e3344',
                     borderWidth: 1,
                 },
+                zoom: {
+                    pan: { enabled: true, mode: 'x' },
+                    zoom: {
+                        wheel: { enabled: true },
+                        pinch: { enabled: true },
+                        drag: { enabled: true, backgroundColor: 'rgba(79,140,247,0.15)', borderColor: '#4f8cf7' },
+                        mode: 'x',
+                    },
+                    limits: { x: { minRange: 60000 } },
+                },
             },
         };
 
